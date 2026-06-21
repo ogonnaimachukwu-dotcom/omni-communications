@@ -1,0 +1,5 @@
+# Replace with your domain. Caddy provisions TLS automatically via Let's Encrypt.
+{$APP_DOMAIN:omni.example.com} {
+	encode gzip
+	reverse_proxy web:3000
+}

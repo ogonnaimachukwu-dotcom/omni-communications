@@ -16,7 +16,7 @@ import { signOut } from "@/lib/auth/client";
 
 const nav = [
   { label: "Projects", href: "/projects", icon: LayoutGrid, live: true },
-  { label: "Distributors", href: "/distributors", icon: Users, live: false },
+  { label: "Distributors", href: "/distributors", icon: Users, live: true },
   { label: "Campaigns", href: "/campaigns", icon: Send, live: false },
   { label: "Inbox", href: "/inbox", icon: Inbox, live: false },
   { label: "Analytics", href: "/analytics", icon: BarChart3, live: false },

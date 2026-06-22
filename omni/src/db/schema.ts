@@ -9,6 +9,7 @@ import {
   jsonb,
   index,
   uniqueIndex,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { user } from "./auth-schema";
@@ -45,6 +46,20 @@ export const campaignStatus = pgEnum("campaign_status", [
   "scheduled",
   "sending",
   "sent",
+  "failed",
+]);
+
+export const customFieldType = pgEnum("custom_field_type", [
+  "text",
+  "number",
+  "date",
+  "select",
+  "boolean",
+]);
+
+export const importStatus = pgEnum("import_status", [
+  "completed",
+  "partial",
   "failed",
 ]);
 
@@ -161,10 +176,14 @@ export const distributors = pgTable(
       .notNull()
       .references(() => distributorLists.id, { onDelete: "cascade" }),
     email: text("email").notNull(),
-    name: text("name"),
+    name: text("name").notNull(),
+    firstName: text("first_name"),
+    lastName: text("last_name"),
     // Flexible merge-tag fields (company, title, custom columns from CSV import).
     fields: jsonb("fields").$type<Record<string, string>>().notNull().default({}),
     status: distributorStatus("status").notNull().default("subscribed"),
+    archivedAt: timestamp("archived_at"),
+    deletedAt: timestamp("deleted_at"),
     // Per-contact token powering RFC 8058 one-click unsubscribe.
     unsubscribeToken: uuid("unsubscribe_token").notNull().defaultRandom(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -176,9 +195,109 @@ export const distributors = pgTable(
   (t) => [
     index("distributors_project_idx").on(t.projectId),
     index("distributors_list_idx").on(t.listId),
+    index("distributors_list_active_idx").on(t.listId, t.deletedAt),
     // One email per list; re-importing updates rather than duplicates.
     uniqueIndex("distributors_list_email_uidx").on(t.listId, t.email),
     uniqueIndex("distributors_unsub_token_uidx").on(t.unsubscribeToken),
+  ],
+);
+
+/* =========================================================================
+ * Tags — project-scoped labels that can be applied to distributors.
+ * ====================================================================== */
+
+export const tags = pgTable(
+  "tags",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    color: text("color"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index("tags_project_idx").on(t.projectId),
+    uniqueIndex("tags_project_name_uidx").on(t.projectId, sql`lower(${t.name})`),
+  ],
+);
+
+export const distributorTags = pgTable(
+  "distributor_tags",
+  {
+    distributorId: uuid("distributor_id")
+      .notNull()
+      .references(() => distributors.id, { onDelete: "cascade" }),
+    tagId: uuid("tag_id")
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.distributorId, t.tagId] }),
+    index("distributor_tags_tag_idx").on(t.tagId),
+  ],
+);
+
+/* =========================================================================
+ * Custom field definitions — project-scoped typed columns for distributors.
+ * ====================================================================== */
+
+export const customFieldDefinitions = pgTable(
+  "custom_field_definitions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    label: text("label").notNull(),
+    type: customFieldType("type").notNull().default("text"),
+    options: jsonb("options").$type<string[]>(),
+    position: integer("position").notNull().default(0),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index("custom_field_definitions_project_idx").on(t.projectId),
+    uniqueIndex("custom_field_definitions_project_key_uidx").on(t.projectId, t.key),
+  ],
+);
+
+/* =========================================================================
+ * Distributor imports — log of committed CSV imports.
+ * ====================================================================== */
+
+export const distributorImports = pgTable(
+  "distributor_imports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    listId: uuid("list_id")
+      .notNull()
+      .references(() => distributorLists.id, { onDelete: "cascade" }),
+    filename: text("filename").notNull(),
+    status: importStatus("status").notNull().default("completed"),
+    totalRows: integer("total_rows").notNull().default(0),
+    successCount: integer("success_count").notNull().default(0),
+    failureCount: integer("failure_count").notNull().default(0),
+    duplicateCount: integer("duplicate_count").notNull().default(0),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    completedAt: timestamp("completed_at"),
+  },
+  (t) => [
+    index("distributor_imports_project_idx").on(t.projectId),
+    index("distributor_imports_list_idx").on(t.listId),
   ],
 );
 

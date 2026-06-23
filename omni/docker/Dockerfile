@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
 
 # ---- Dependencies ----
 FROM base AS deps
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json* .npmrc ./
 RUN npm ci
 
 # ---- Build (web, standalone output) ----

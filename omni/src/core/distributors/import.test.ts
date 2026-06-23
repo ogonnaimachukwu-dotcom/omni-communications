@@ -128,7 +128,7 @@ describe("selectForCommit", () => {
   });
 
   it("updates list duplicates under the update policy", () => {
-    const { inserts, updates } = selectForCommit(rows, new Set(), "update");
+    const { updates } = selectForCommit(rows, new Set(), "update");
     expect(updates.map((u) => u.email)).toEqual(["dupe@acme.com"]);
   });
 

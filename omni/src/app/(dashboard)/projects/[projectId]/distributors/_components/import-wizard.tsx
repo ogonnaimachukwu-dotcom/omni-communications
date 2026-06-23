@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Loader2, Upload, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Loader2, Upload, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -300,7 +300,8 @@ export function ImportWizard({
                       onChange={() =>
                         setExcluded((prev) => {
                           const next = new Set(prev);
-                          next.has(r.rowIndex) ? next.delete(r.rowIndex) : next.add(r.rowIndex);
+                          if (next.has(r.rowIndex)) next.delete(r.rowIndex);
+                          else next.add(r.rowIndex);
                           return next;
                         })
                       }

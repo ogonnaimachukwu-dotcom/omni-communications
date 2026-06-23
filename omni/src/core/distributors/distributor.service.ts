@@ -1,5 +1,5 @@
 import Papa from "papaparse";
-import { db, type DB } from "@/db";
+import { db } from "@/db";
 import { writeAudit } from "@/lib/audit";
 import * as repo from "./distributor.repository";
 import type { DistributorWithTags, PagedDistributors, InsertDistributor } from "./distributor.repository";
@@ -375,11 +375,8 @@ export async function commitImport(
   let inserted = 0;
   let updated = 0;
   await db.transaction(async (tx) => {
-    // The foundation `DB` type is the pooled client; a transaction is a valid
-    // query runner for these calls, so we pass it through the repo's db slot.
-    const txdb = tx as unknown as DB;
-    inserted = await repo.insertMany(insertRows, txdb);
-    updated = await repo.updateManyByEmail(input.listId, updates, txdb);
+    inserted = await repo.insertMany(insertRows, tx);
+    updated = await repo.updateManyByEmail(input.listId, updates, tx);
   });
 
   const success = inserted + updated;

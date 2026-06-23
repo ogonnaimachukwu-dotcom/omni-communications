@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Settings2 } from "lucide-react";
+import { ArrowLeft, Settings2, Users } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { idSchema } from "@/core/projects/project.schema";
 import { getProject, getProjectStats } from "@/core/projects/project.service";
@@ -46,6 +46,13 @@ export default async function ProjectDetailPage({
         </div>
         <div className="flex items-center gap-2">
           <StatusToggle projectId={project.id} status={project.status} />
+          <Link
+            href={`/projects/${project.id}/distributors`}
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            <Users className="size-4" />
+            Distributors
+          </Link>
           <Link
             href={`/projects/${project.id}/settings`}
             className={cn(buttonVariants({ variant: "outline", size: "sm" }))}

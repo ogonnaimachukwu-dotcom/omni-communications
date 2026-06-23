@@ -10,7 +10,6 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { cn } from "@/lib/utils";
 import type { DistributorWithTags } from "@/core/distributors/distributor.repository";
 import type { DistributorView } from "@/core/distributors/distributor.schema";
 import type { ListRow } from "@/core/distributors/list.repository";
@@ -75,7 +74,8 @@ export function DistributorsClient({
   const toggle = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
 

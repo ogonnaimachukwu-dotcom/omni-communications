@@ -12,4 +12,9 @@ export const db = drizzle(pool, {
   casing: "snake_case",
 });
 
-export type DB = typeof db;
+// A Drizzle transaction handle, derived from db.transaction's callback arg.
+export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+// Repositories accept either the pooled client or an open transaction, so the
+// same query functions compose inside db.transaction(...) without casts.
+export type DB = typeof db | Transaction;

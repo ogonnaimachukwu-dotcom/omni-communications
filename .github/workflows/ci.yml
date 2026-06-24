@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+defaults:
+  run:
+    working-directory: omni
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: omni/package-lock.json
+
+      - name: Install (clean, Linux)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests
+        run: npm run test
+
+      - name: Build
+        env:
+          NODE_ENV: production
+          DATABASE_URL: postgres://user:pass@localhost:5432/omni
+          BETTER_AUTH_SECRET: ci_placeholder_secret_ci_placeholder_secret
+          BETTER_AUTH_URL: http://localhost:3000
+          APP_URL: http://localhost:3000
+          RESEND_API_KEY: re_ci_placeholder
+          RESEND_WEBHOOK_SECRET: whsec_ci_placeholder
+        run: |
+          export ENCRYPTION_MASTER_KEY=$(openssl rand -base64 32)
+          npm run build

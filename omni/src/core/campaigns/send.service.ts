@@ -102,6 +102,7 @@ export async function sendRecipient(job: SendCampaignRecipientJob): Promise<void
   // Compliance: re-check suppression at send time (opt-outs since fan-out).
   if (await suppressions.isSuppressed(recipient.projectId, recipient.email)) {
     await recipientRepo.markRecipient(recipient.id, { status: "suppressed" });
+    await maybeComplete(recipient.projectId, campaign.id);
     return;
   }
 

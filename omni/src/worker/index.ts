@@ -1,29 +1,36 @@
 import "@/env"; // validate env at boot
 import { getBoss, stopBoss } from "@/lib/queue";
-import { QUEUES, type SendCampaignRecipientJob } from "@/lib/queue/jobs";
+import { QUEUES, type SendCampaignJob, type SendCampaignRecipientJob } from "@/lib/queue/jobs";
+import { handleSendCampaign } from "./handlers/send-campaign";
+import { handleSendRecipient } from "./handlers/send-recipient";
 
 /**
- * Worker process. Boots pg-boss and registers job handlers.
+ * Worker process. Boots pg-boss and registers the campaign send pipeline:
+ *   SEND_CAMPAIGN           -> fan-out: freeze audience, enqueue recipients
+ *   SEND_CAMPAIGN_RECIPIENT -> render -> suppression re-check -> send -> ledger
  *
- * NOTE: the SEND_CAMPAIGN_RECIPIENT handler is intentionally a stub in this
- * foundation batch — the real send pipeline (render -> suppression re-check ->
- * ResendTransport -> ledger update) lands in Batch 3. The plumbing here proves
- * the worker boots, connects, and can consume the queue.
+ * Recipient concurrency is bounded (batchSize) to stay within Resend rate
+ * limits and the 2 CPU / 2 GB VPS.
  */
 async function main() {
   const boss = await getBoss();
 
+  await boss.createQueue(QUEUES.SEND_CAMPAIGN);
   await boss.createQueue(QUEUES.SEND_CAMPAIGN_RECIPIENT);
+
+  await boss.work<SendCampaignJob>(QUEUES.SEND_CAMPAIGN, async ([job]) => {
+    await handleSendCampaign(job);
+  });
 
   await boss.work<SendCampaignRecipientJob>(
     QUEUES.SEND_CAMPAIGN_RECIPIENT,
-    async ([job]) => {
-      // TODO (Batch 3): real send pipeline.
-      console.log("[worker] received send job (stub):", job.data.recipientId);
+    { batchSize: 5 },
+    async (jobs) => {
+      for (const job of jobs) await handleSendRecipient(job);
     },
   );
 
-  console.log("[worker] started; consuming:", QUEUES.SEND_CAMPAIGN_RECIPIENT);
+  console.log("[worker] started; consuming:", Object.values(QUEUES).join(", "));
 }
 
 main().catch((err) => {

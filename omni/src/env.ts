@@ -25,6 +25,7 @@ const schema = z.object({
   RESEND_WEBHOOK_SECRET: z.string().min(1),
 
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  ANTHROPIC_MODEL: z.string().min(1).optional(),
 });
 
 const parsed = schema.safeParse(process.env);

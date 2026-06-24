@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Settings2, Users } from "lucide-react";
+import { ArrowLeft, Settings2, Users, Send } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { idSchema } from "@/core/projects/project.schema";
 import { getProject, getProjectStats } from "@/core/projects/project.service";
@@ -52,6 +52,13 @@ export default async function ProjectDetailPage({
           >
             <Users className="size-4" />
             Distributors
+          </Link>
+          <Link
+            href={`/projects/${project.id}/campaigns`}
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            <Send className="size-4" />
+            Campaigns
           </Link>
           <Link
             href={`/projects/${project.id}/settings`}

@@ -1,5 +1,5 @@
 {
-  "id": "b518d004-46b7-46dd-a5e2-7beca6b44fef",
+  "id": "92faeaa7-494f-4b58-8999-7c7645c38338",
   "prevId": "1f7e2b77-ebd8-432c-be90-961336b3d009",
   "version": "7",
   "dialect": "postgresql",
@@ -520,6 +520,21 @@
           "columns": [
             {
               "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "campaigns_mailbox_idx": {
+          "name": "campaigns_mailbox_idx",
+          "columns": [
+            {
+              "expression": "mailbox_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

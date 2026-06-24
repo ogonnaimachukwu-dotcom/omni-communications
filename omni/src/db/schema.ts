@@ -429,6 +429,7 @@ export const campaigns = pgTable(
   (t) => [
     index("campaigns_project_idx").on(t.projectId),
     index("campaigns_status_idx").on(t.status),
+    index("campaigns_mailbox_idx").on(t.mailboxId),
   ],
 );
 

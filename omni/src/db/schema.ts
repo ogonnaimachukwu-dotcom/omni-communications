@@ -433,6 +433,8 @@ export const campaignRecipients = pgTable(
     index("campaign_recipients_provider_msg_idx").on(t.providerMessageId),
     // Idempotency: never enqueue the same address twice for one campaign.
     uniqueIndex("campaign_recipients_campaign_email_uidx").on(t.campaignId, t.email),
+    // Analytics: project-scoped status rollups (also speeds project stats()).
+    index("campaign_recipients_project_status_idx").on(t.projectId, t.status),
   ],
 );
 
@@ -458,6 +460,8 @@ export const emailEvents = pgTable(
   (t) => [
     index("email_events_recipient_idx").on(t.recipientId),
     index("email_events_provider_msg_idx").on(t.providerMessageId),
+    // Analytics: project-scoped aggregation + time-series by event type.
+    index("email_events_project_type_time_idx").on(t.projectId, t.type, t.occurredAt),
   ],
 );
 

@@ -1,0 +1,2 @@
+CREATE INDEX "campaign_recipients_project_status_idx" ON "campaign_recipients" USING btree ("project_id","status");--> statement-breakpoint
+CREATE INDEX "email_events_project_type_time_idx" ON "email_events" USING btree ("project_id","type","occurred_at");

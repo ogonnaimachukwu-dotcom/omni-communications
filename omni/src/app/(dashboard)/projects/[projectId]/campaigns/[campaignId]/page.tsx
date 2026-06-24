@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Trash2 } from "lucide-react";
+import { ArrowLeft, Trash2, BarChart3 } from "lucide-react";
 import { idSchema as projectIdSchema } from "@/core/projects/project.schema";
 import { getProject } from "@/core/projects/project.service";
 import { getCampaign } from "@/core/campaigns/campaign.service";
@@ -8,7 +8,8 @@ import { listLists } from "@/core/distributors/list.service";
 import { listSendingDomains } from "@/core/sending-domains/sending-domain.service";
 import { listSignatures } from "@/core/signatures/signature.service";
 import { isAiConfigured } from "@/lib/ai";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { CampaignEditor } from "../_components/campaign-editor";
 import { SendBar } from "../_components/send-bar";
 import { SignatureManager } from "../_components/signature-manager";
@@ -57,13 +58,21 @@ export default async function CampaignDetailPage({
 
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">{campaign.subject || "Untitled campaign"}</h1>
-        {editable && (
-          <form action={deleteCampaignAction.bind(null, project.id, campaign.id)}>
-            <Button type="submit" variant="ghost" size="sm">
-              <Trash2 className="size-4" /> Delete
-            </Button>
-          </form>
-        )}
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/projects/${project.id}/campaigns/${campaign.id}/analytics`}
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            <BarChart3 className="size-4" /> Analytics
+          </Link>
+          {editable && (
+            <form action={deleteCampaignAction.bind(null, project.id, campaign.id)}>
+              <Button type="submit" variant="ghost" size="sm">
+                <Trash2 className="size-4" /> Delete
+              </Button>
+            </form>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">

@@ -74,6 +74,7 @@ export async function create(
       previewText: input.previewText ?? null,
       listId: input.listId ?? null,
       sendingDomainId: input.sendingDomainId ?? null,
+      mailboxId: input.mailboxId ?? null,
       signatureId: input.signatureId ?? null,
     })
     .returning();
@@ -94,6 +95,7 @@ export async function update(
       previewText: input.previewText ?? null,
       listId: input.listId ?? null,
       sendingDomainId: input.sendingDomainId ?? null,
+      mailboxId: input.mailboxId ?? null,
       signatureId: input.signatureId ?? null,
     })
     .where(and(eq(campaigns.projectId, projectId), eq(campaigns.id, id), isNull(campaigns.deletedAt)))

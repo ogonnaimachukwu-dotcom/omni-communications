@@ -15,6 +15,13 @@
       "when": 1782325428394,
       "tag": "0001_analytics_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782343668084,
+      "tag": "0002_short_skrulls",
+      "breakpoints": true
     }
   ]
 }

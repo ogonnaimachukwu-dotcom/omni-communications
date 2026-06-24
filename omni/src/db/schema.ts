@@ -63,6 +63,9 @@ export const importStatus = pgEnum("import_status", [
   "failed",
 ]);
 
+export const mailboxProvider = pgEnum("mailbox_provider", ["gmail", "outlook"]);
+export const mailboxStatus = pgEnum("mailbox_status", ["active", "invalid", "paused"]);
+
 // The per-recipient send ledger lifecycle.
 export const recipientStatus = pgEnum("recipient_status", [
   "queued",
@@ -139,6 +142,36 @@ export const sendingDomains = pgTable(
   (t) => [
     index("sending_domains_project_idx").on(t.projectId),
     uniqueIndex("sending_domains_project_email_uidx").on(t.projectId, t.fromEmail),
+  ],
+);
+
+/* =========================================================================
+ * Mailboxes — connected Gmail / Outlook accounts.
+ * ====================================================================== */
+
+export const mailboxes = pgTable(
+  "mailboxes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    provider: mailboxProvider("provider").notNull(),
+    status: mailboxStatus("status").notNull().default("active"),
+    credentials: text("credentials").notNull(), // SealedSecret stringified
+    tokenExpiresAt: timestamp("token_expires_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+    lastSyncedAt: timestamp("last_synced_at"),
+    syncCursor: text("sync_cursor"),
+  },
+  (t) => [
+    index("mailboxes_project_idx").on(t.projectId),
+    uniqueIndex("mailboxes_project_email_uidx").on(t.projectId, t.email),
   ],
 );
 
@@ -362,6 +395,9 @@ export const campaigns = pgTable(
       onDelete: "set null",
     }),
     sendingDomainId: uuid("sending_domain_id").references(() => sendingDomains.id, {
+      onDelete: "set null",
+    }),
+    mailboxId: uuid("mailbox_id").references(() => mailboxes.id, {
       onDelete: "set null",
     }),
     signatureId: uuid("signature_id").references(() => signatures.id, {

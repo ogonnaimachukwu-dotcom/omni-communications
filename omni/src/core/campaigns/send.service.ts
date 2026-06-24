@@ -9,6 +9,8 @@ import { QUEUES, type SendCampaignJob, type SendCampaignRecipientJob } from "@/l
 import * as campaignRepo from "./campaign.repository";
 import * as recipientRepo from "./recipient.repository";
 import * as suppressions from "@/core/suppressions/suppression.service";
+import * as projectRepo from "@/core/projects/project.repository";
+import * as mailboxRepo from "@/core/mailboxes/mailbox.repository";
 import { renderCampaignEmail, unsubscribeHeaders, type RecipientContext } from "./render";
 
 const RECIPIENT_RETRY = { retryLimit: 0 } as const;
@@ -106,15 +108,40 @@ export async function sendRecipient(job: SendCampaignRecipientJob): Promise<void
     return;
   }
 
-  if (!distributor || !from) {
+  const isMailboxSend = !!campaign.mailboxId;
+
+  if (!distributor || (!isMailboxSend && !from)) {
     await recipientRepo.markRecipient(recipient.id, {
       status: "failed",
-      error: !from ? "no_sending_domain" : "no_distributor",
+      error: !distributor ? "no_distributor" : "no_sending_domain",
       failedAt: new Date(),
     });
     await campaignRepo.bumpCounters(campaign.id, { failedCount: 1 });
     await maybeComplete(recipient.projectId, campaign.id);
     return;
+  }
+
+  let fromString = "";
+  let replyToEmail: string | undefined = undefined;
+
+  if (isMailboxSend) {
+    const mailbox = await mailboxRepo.findById(campaign.mailboxId!);
+    if (!mailbox) {
+      await recipientRepo.markRecipient(recipient.id, {
+        status: "failed",
+        error: "mailbox_not_found",
+        failedAt: new Date(),
+      });
+      await campaignRepo.bumpCounters(campaign.id, { failedCount: 1 });
+      await maybeComplete(recipient.projectId, campaign.id);
+      return;
+    }
+    const project = await projectRepo.findById(recipient.projectId);
+    const fromName = project?.ceoName || project?.name || "";
+    fromString = fromName ? `${fromName} <${mailbox.email}>` : mailbox.email;
+  } else {
+    fromString = `${from!.fromName} <${from!.fromEmail}>`;
+    replyToEmail = from!.replyToEmail ?? undefined;
   }
 
   const recipientCtx: RecipientContext = {
@@ -132,10 +159,11 @@ export async function sendRecipient(job: SendCampaignRecipientJob): Promise<void
   });
 
   try {
-    const { providerMessageId } = await getTransport().send({
-      from: `${from.fromName} <${from.fromEmail}>`,
+    const transport = await getTransport(campaign.mailboxId);
+    const { providerMessageId } = await transport.send({
+      from: fromString,
       to: recipient.email,
-      replyTo: from.replyToEmail ?? undefined,
+      replyTo: replyToEmail,
       subject: rendered.subject,
       html: rendered.html,
       headers: unsubscribeHeaders(url),
@@ -147,9 +175,21 @@ export async function sendRecipient(job: SendCampaignRecipientJob): Promise<void
     });
     await campaignRepo.bumpCounters(campaign.id, { sentCount: 1 });
   } catch (e) {
+    const errorMsg = e instanceof Error ? e.message : "send_failed";
+
+    if (errorMsg === "RATE_LIMIT_EXCEEDED") {
+      const boss = await getBoss();
+      await boss.send(
+        QUEUES.SEND_CAMPAIGN_RECIPIENT,
+        { recipientId: recipient.id, campaignId: campaign.id, projectId: recipient.projectId } satisfies SendCampaignRecipientJob,
+        { startAfter: 120, singletonKey: recipient.id }
+      );
+      return;
+    }
+
     await recipientRepo.markRecipient(recipient.id, {
       status: "failed",
-      error: e instanceof Error ? e.message.slice(0, 500) : "send_failed",
+      error: errorMsg.slice(0, 500),
       failedAt: new Date(),
     });
     await campaignRepo.bumpCounters(campaign.id, { failedCount: 1 });

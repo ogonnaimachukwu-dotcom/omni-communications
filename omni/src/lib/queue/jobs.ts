@@ -8,6 +8,8 @@ export const QUEUES = {
   SEND_CAMPAIGN: "send-campaign",
   // Per-recipient: re-check suppression, render, send, update the ledger.
   SEND_CAMPAIGN_RECIPIENT: "send-campaign-recipient",
+  // Mailbox synchronization: fetch bounces (NDRs) for active mailboxes.
+  SYNC_MAILBOX_INBOX: "sync-mailbox-inbox",
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -28,4 +30,8 @@ export interface SendCampaignRecipientJob {
   recipientId: string;
   campaignId: string;
   projectId: string;
+}
+
+export interface SyncMailboxJob {
+  mailboxId: string;
 }

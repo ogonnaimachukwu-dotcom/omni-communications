@@ -124,7 +124,7 @@ export async function countByStatus(
 
 export interface SendContext {
   recipient: { id: string; campaignId: string; projectId: string; email: string; status: RecipientStatus };
-  campaign: { id: string; subject: string; bodyHtml: string };
+  campaign: { id: string; subject: string; bodyHtml: string; mailboxId: string | null };
   distributor: { name: string; fields: Record<string, string>; unsubscribeToken: string } | null;
   from: { fromName: string; fromEmail: string; replyToEmail: string | null } | null;
   signatureHtml: string | null;
@@ -195,7 +195,7 @@ export async function getSendContext(
       email: recipient.email,
       status: recipient.status,
     },
-    campaign: { id: campaign.id, subject: campaign.subject, bodyHtml: campaign.bodyHtml },
+    campaign: { id: campaign.id, subject: campaign.subject, bodyHtml: campaign.bodyHtml, mailboxId: campaign.mailboxId },
     distributor,
     from,
     signatureHtml,

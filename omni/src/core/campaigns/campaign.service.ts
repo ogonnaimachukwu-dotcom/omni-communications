@@ -115,7 +115,9 @@ export async function sendCampaign(
     throw new CampaignError("Approve the campaign before sending", "invalid_state");
   }
   if (!existing.listId) throw new CampaignError("Select a distributor list first", "validation");
-  if (!existing.sendingDomainId) throw new CampaignError("Select a sending domain first", "validation");
+  if (!existing.sendingDomainId && !existing.mailboxId) {
+    throw new CampaignError("Select a sending domain or mailbox connection first", "validation");
+  }
 
   const scheduledAt = input.scheduledAt ? new Date(input.scheduledAt) : null;
   if (scheduledAt && scheduledAt.getTime() <= Date.now()) {

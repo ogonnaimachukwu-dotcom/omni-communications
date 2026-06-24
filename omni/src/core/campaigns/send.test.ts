@@ -3,6 +3,7 @@ import { sendRecipient } from "./send.service";
 import * as recipientRepo from "./recipient.repository";
 import type { SendContext } from "./recipient.repository";
 import * as suppressions from "@/core/suppressions/suppression.service";
+import type { EmailTransport } from "@/lib/email";
 
 vi.mock("@/db", () => {
   const mockSet = vi.fn().mockReturnThis();
@@ -62,7 +63,7 @@ describe("sendRecipient", () => {
         email: "suppressed@example.com",
         status: "queued",
       },
-      campaign: { id: "camp1", subject: "Hello", bodyHtml: "body" },
+      campaign: { id: "camp1", subject: "Hello", bodyHtml: "body", mailboxId: null },
       distributor: { name: "Jane", fields: {}, unsubscribeToken: "token1" },
       from: { fromName: "CEO", fromEmail: "ceo@domain.com", replyToEmail: null },
       signatureHtml: null,
@@ -74,10 +75,50 @@ describe("sendRecipient", () => {
 
     await sendRecipient({ recipientId: "rec1", campaignId: "camp1", projectId: "proj1" });
 
-    // It should mark the recipient as suppressed
     expect(recipientRepo.markRecipient).toHaveBeenCalledWith("rec1", { status: "suppressed" });
-
-    // It should call countByStatus/maybeComplete
     expect(recipientRepo.countByStatus).toHaveBeenCalled();
+  });
+
+  it("dispatches successfully via mailbox transport when mailboxId is configured", async () => {
+    const mockCtx = {
+      recipient: {
+        id: "rec1",
+        campaignId: "camp1",
+        projectId: "proj1",
+        email: "target@domain.com",
+        status: "queued",
+      },
+      campaign: { id: "camp1", subject: "Hello", bodyHtml: "body", mailboxId: "mb1" },
+      distributor: { name: "Jane", fields: {}, unsubscribeToken: "token1" },
+      from: null,
+      signatureHtml: null,
+    };
+
+    const mockSend = vi.fn().mockResolvedValue({ providerMessageId: "msg123" });
+    const mockTransport = { name: "gmail", send: mockSend };
+
+    const emailLib = await import("@/lib/email");
+    vi.spyOn(emailLib, "getTransport").mockResolvedValue(mockTransport as unknown as EmailTransport);
+
+    vi.mock("../projects/project.repository", () => ({
+      findById: vi.fn().mockResolvedValue({ id: "proj1", name: "My Project", ceoName: "CEO" }),
+    }));
+    vi.mock("../mailboxes/mailbox.repository", () => ({
+      findById: vi.fn().mockResolvedValue({ id: "mb1", email: "ceo@domain.com", provider: "gmail" }),
+    }));
+
+    vi.spyOn(recipientRepo, "getSendContext").mockResolvedValue(mockCtx as unknown as SendContext);
+    vi.spyOn(suppressions, "isSuppressed").mockResolvedValue(false);
+    vi.spyOn(recipientRepo, "countByStatus").mockResolvedValue(0);
+
+    await sendRecipient({ recipientId: "rec1", campaignId: "camp1", projectId: "proj1" });
+
+    expect(emailLib.getTransport).toHaveBeenCalledWith("mb1");
+    expect(mockSend).toHaveBeenCalled();
+    expect(recipientRepo.markRecipient).toHaveBeenCalledWith("rec1", {
+      status: "sent",
+      providerMessageId: "msg123",
+      sentAt: expect.any(Date),
+    });
   });
 });

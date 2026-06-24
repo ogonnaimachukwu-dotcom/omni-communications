@@ -15,6 +15,7 @@ export const createCampaignSchema = z.object({
   previewText: z.string().trim().max(500).optional().or(z.literal("").transform(() => undefined)),
   listId: optionalUuid,
   sendingDomainId: optionalUuid,
+  mailboxId: optionalUuid,
   signatureId: optionalUuid,
 });
 export type CreateCampaignInput = z.infer<typeof createCampaignSchema>;

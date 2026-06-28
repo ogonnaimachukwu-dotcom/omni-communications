@@ -5,6 +5,10 @@ import { handleSendCampaign } from "./handlers/send-campaign";
 import { handleSendRecipient } from "./handlers/send-recipient";
 import { handleSyncMailbox } from "./handlers/sync-mailbox";
 import * as mailboxRepo from "@/core/mailboxes/mailbox.repository";
+import { logStorage, logger } from "@/lib/logger";
+import { randomUUID } from "crypto";
+import { closeDatabase } from "@/db";
+import { trace } from "@/lib/tracing";
 
 /**
  * Worker process. Boots pg-boss and registers the campaign send pipeline:
@@ -17,21 +21,54 @@ import * as mailboxRepo from "@/core/mailboxes/mailbox.repository";
  */
 async function main() {
   const boss = await getBoss();
+  const workerId = randomUUID();
 
   await boss.createQueue(QUEUES.SEND_CAMPAIGN);
   await boss.createQueue(QUEUES.SEND_CAMPAIGN_RECIPIENT);
   await boss.createQueue(QUEUES.SYNC_MAILBOX_INBOX);
   await boss.createQueue("mailbox-sync-cron");
 
-  await boss.work<SendCampaignJob>(QUEUES.SEND_CAMPAIGN, async ([job]) => {
-    await handleSendCampaign(job);
+  await boss.work<SendCampaignJob>(QUEUES.SEND_CAMPAIGN, async (jobs) => {
+    const job = jobs[0];
+    if (!job) return;
+    const correlationId = job.data.correlationId || job.id;
+    await logStorage.run(
+      {
+        workerId,
+        jobId: job.id,
+        correlationId,
+        campaignId: job.data.campaignId,
+        projectId: job.data.projectId,
+      },
+      async () => {
+        await trace("worker.job.send_campaign", async () => {
+          await handleSendCampaign(job);
+        });
+      }
+    );
   });
 
   await boss.work<SendCampaignRecipientJob>(
     QUEUES.SEND_CAMPAIGN_RECIPIENT,
     { batchSize: 5 },
     async (jobs) => {
-      for (const job of jobs) await handleSendRecipient(job);
+      for (const job of jobs) {
+        const correlationId = job.data.correlationId || job.id;
+        await logStorage.run(
+          {
+            workerId,
+            jobId: job.id,
+            correlationId,
+            campaignId: job.data.campaignId,
+            projectId: job.data.projectId,
+          },
+          async () => {
+            await trace("worker.job.send_recipient", async () => {
+              await handleSendRecipient(job);
+            });
+          }
+        );
+      }
     },
   );
 
@@ -40,33 +77,68 @@ async function main() {
     QUEUES.SYNC_MAILBOX_INBOX,
     { batchSize: 2 },
     async (jobs) => {
-      for (const job of jobs) await handleSyncMailbox(job);
+      for (const job of jobs) {
+        const correlationId = job.data.correlationId || job.id;
+        await logStorage.run(
+          {
+            workerId,
+            jobId: job.id,
+            correlationId,
+            mailboxId: job.data.mailboxId,
+          },
+          async () => {
+            await trace("worker.job.sync_mailbox", async () => {
+              await handleSyncMailbox(job);
+            });
+          }
+        );
+      }
     },
   );
 
   // Cron coordinator: queries all active mailboxes and enqueues sync jobs
-  await boss.work("mailbox-sync-cron", async () => {
-    const activeList = await mailboxRepo.listActive();
-    for (const mb of activeList) {
-      await boss.send(QUEUES.SYNC_MAILBOX_INBOX, { mailboxId: mb.id } satisfies SyncMailboxJob);
-    }
+  await boss.work<{ correlationId?: string }>("mailbox-sync-cron", async (jobs) => {
+    const job = jobs[0];
+    const correlationId = job ? (job.data.correlationId || job.id) : randomUUID();
+    await logStorage.run(
+      {
+        workerId,
+        jobId: job?.id,
+        correlationId,
+      },
+      async () => {
+        await trace("worker.cron.mailbox_sync", async () => {
+          const activeList = await mailboxRepo.listActive();
+          for (const mb of activeList) {
+            await boss.send(QUEUES.SYNC_MAILBOX_INBOX, { mailboxId: mb.id } satisfies SyncMailboxJob);
+          }
+        });
+      }
+    );
   });
 
   // Schedule cron execution every 10 minutes
   await boss.schedule("mailbox-sync-cron", "*/10 * * * *");
 
-  console.log("[worker] started; consuming:", Object.values(QUEUES).join(", "));
+  logger.info("Worker started", { queues: Object.values(QUEUES) });
 }
 
 main().catch((err) => {
-  console.error("[worker] fatal:", err);
+  logger.error("Worker fatal error", err);
   process.exit(1);
 });
 
-const shutdown = async () => {
-  console.log("[worker] shutting down...");
-  await stopBoss();
-  process.exit(0);
+const shutdown = async (signal: string) => {
+  logger.info(`Worker received ${signal}, shutting down gracefully...`);
+  try {
+    await stopBoss();
+    await closeDatabase();
+    logger.info("Worker shutdown complete.");
+    process.exit(0);
+  } catch (err) {
+    logger.error("Error during worker shutdown", err);
+    process.exit(1);
+  }
 };
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));

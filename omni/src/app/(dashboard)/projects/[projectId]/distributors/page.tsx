@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
 import { ArrowLeft, Upload } from "lucide-react";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
 import { idSchema } from "@/core/projects/project.schema";
-import { getProject } from "@/core/projects/project.service";
+import { requireProject } from "@/core/projects/project.service";
 import { parseListDistributorsQuery } from "@/core/distributors/distributor.schema";
 import { listDistributors } from "@/core/distributors/distributor.service";
 import { listLists, listListsWithCounts } from "@/core/distributors/list.service";
@@ -23,18 +25,25 @@ export default async function DistributorsPage({
   const id = idSchema.safeParse(projectId);
   if (!id.success) notFound();
 
-  const project = await getProject(id.data);
-  if (!project) notFound();
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) redirect("/login");
+
+  let project;
+  try {
+    project = await requireProject(id.data, session.user.id);
+  } catch {
+    notFound();
+  }
 
   const query = parseListDistributorsQuery(await searchParams);
 
   const [page, lists, listsWithCounts, tags, tagsWithCounts, fieldDefs] = await Promise.all([
-    listDistributors(project.id, query),
-    listLists(project.id),
-    listListsWithCounts(project.id),
-    listTags(project.id),
-    listTagsWithCounts(project.id),
-    listCustomFields(project.id),
+    listDistributors(project.id, query, session.user.id),
+    listLists(project.id, session.user.id),
+    listListsWithCounts(project.id, session.user.id),
+    listTags(project.id, session.user.id),
+    listTagsWithCounts(project.id, session.user.id),
+    listCustomFields(project.id, session.user.id),
   ]);
 
   return (

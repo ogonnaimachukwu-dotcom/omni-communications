@@ -2,6 +2,7 @@ import * as repo from "./analytics.repository";
 import type { StatusCounts } from "./analytics.repository";
 import { computeRates, type MetricCounts, type MetricRates } from "./analytics.rates";
 import { campaignsCsv, timeseriesCsv, suppressionsCsv, type TimeseriesPoint } from "./analytics.csv";
+import { getAccessibleProject } from "@/core/projects/project.service";
 
 export interface CampaignPerf {
   campaignId: string;
@@ -53,7 +54,11 @@ function assemble(status: StatusCounts, eng: { opened: number; clicked: number }
 export async function getProjectAnalytics(
   projectId: string,
   range: { from: Date; to: Date },
+  userId: string,
 ): Promise<ProjectAnalytics> {
+  const accessible = await getAccessibleProject(projectId, userId);
+  if (!accessible) throw new Error("Project access denied");
+
   const [status, eng, unsub, breakdown, series, perCampaign, perList] = await Promise.all([
     repo.statusCounts(projectId),
     repo.engagementCounts(projectId),
@@ -82,7 +87,10 @@ export async function getProjectAnalytics(
   };
 }
 
-export async function getCampaignAnalytics(projectId: string, campaignId: string): Promise<CampaignAnalytics> {
+export async function getCampaignAnalytics(projectId: string, campaignId: string, userId: string): Promise<CampaignAnalytics> {
+  const accessible = await getAccessibleProject(projectId, userId);
+  if (!accessible) throw new Error("Project access denied");
+
   const [status, eng] = await Promise.all([
     repo.statusCounts(projectId, { campaignId }),
     repo.engagementCounts(projectId, { campaignId }),
@@ -215,7 +223,9 @@ function emptyStatus(): StatusCounts {
 
 /* -------------------- CSV exports -------------------- */
 
-export async function exportCampaignsCsv(projectId: string): Promise<string> {
+export async function exportCampaignsCsv(projectId: string, userId: string): Promise<string> {
+  const accessible = await getAccessibleProject(projectId, userId);
+  if (!accessible) throw new Error("Project access denied");
   const perf = await rankCampaigns(projectId);
   return campaignsCsv(
     perf.map((p) => ({
@@ -233,12 +243,17 @@ export async function exportCampaignsCsv(projectId: string): Promise<string> {
   );
 }
 
-export async function exportTimeseriesCsv(projectId: string, range: { from: Date; to: Date }): Promise<string> {
+export async function exportTimeseriesCsv(projectId: string, range: { from: Date; to: Date }, userId: string): Promise<string> {
+  const accessible = await getAccessibleProject(projectId, userId);
+  if (!accessible) throw new Error("Project access denied");
   return timeseriesCsv(await buildTimeseries(projectId, range));
 }
 
-export async function exportSuppressionsCsv(projectId: string): Promise<string> {
+export async function exportSuppressionsCsv(projectId: string, userId: string): Promise<string> {
+  const accessible = await getAccessibleProject(projectId, userId);
+  if (!accessible) throw new Error("Project access denied");
   const breakdown = await repo.suppressionBreakdown(projectId);
   return suppressionsCsv(breakdown.map((b) => ({ reason: b.reason, count: b.count })));
 }
+
 

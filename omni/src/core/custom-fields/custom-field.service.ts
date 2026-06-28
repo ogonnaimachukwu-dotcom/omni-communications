@@ -1,17 +1,20 @@
 import { writeAudit } from "@/lib/audit";
+import { AppError } from "@/lib/errors";
 import * as repo from "./custom-field.repository";
 import type { CustomFieldRow } from "./custom-field.repository";
 import type { FieldDef } from "./custom-field.schema";
 import type { CreateCustomFieldInput, UpdateCustomFieldInput } from "./custom-field.schema";
+import { getAccessibleProject } from "@/core/projects/project.service";
 
 export { type CustomFieldRow } from "./custom-field.repository";
 
-export class CustomFieldError extends Error {
+export class CustomFieldError extends AppError {
   constructor(
     message: string,
-    public readonly code: "not_found" | "conflict" = "conflict",
+    code: "not_found" | "conflict" = "conflict",
+    statusCode: number = 400,
   ) {
-    super(message);
+    super(message, code, statusCode);
     this.name = "CustomFieldError";
   }
 }
@@ -21,12 +24,16 @@ interface Actor {
   ipAddress?: string | null;
 }
 
-export function listCustomFields(projectId: string): Promise<CustomFieldRow[]> {
+export async function listCustomFields(projectId: string, userId: string): Promise<CustomFieldRow[]> {
+  const accessible = await getAccessibleProject(projectId, userId);
+  if (!accessible) throw new CustomFieldError("Field not found", "not_found");
   return repo.findAll(projectId);
 }
 
 /** Returns simplified FieldDef array for the import engine. */
-export async function fieldDefs(projectId: string): Promise<FieldDef[]> {
+export async function fieldDefs(projectId: string, userId: string): Promise<FieldDef[]> {
+  const accessible = await getAccessibleProject(projectId, userId);
+  if (!accessible) throw new CustomFieldError("Field not found", "not_found");
   const rows = await repo.findAll(projectId);
   return rows.map((r) => ({
     key: r.key,
@@ -36,12 +43,16 @@ export async function fieldDefs(projectId: string): Promise<FieldDef[]> {
   }));
 }
 
+
 export async function createCustomField(
   projectId: string,
   input: CreateCustomFieldInput,
   actor: Actor,
 ): Promise<CustomFieldRow> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new CustomFieldError("Field not found", "not_found");
   try {
+
     const created = await repo.create({
       projectId,
       key: input.key,
@@ -75,6 +86,8 @@ export async function updateCustomField(
   input: UpdateCustomFieldInput,
   actor: Actor,
 ): Promise<CustomFieldRow> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new CustomFieldError("Field not found", "not_found");
   const data: Record<string, unknown> = {};
   if (input.label !== undefined) data.label = input.label;
   if (input.type !== undefined) data.type = input.type;
@@ -100,7 +113,10 @@ export async function deleteCustomField(
   id: string,
   actor: Actor,
 ): Promise<void> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new CustomFieldError("Field not found", "not_found");
   const deleted = await repo.remove(projectId, id);
+
   if (!deleted) throw new CustomFieldError("Field not found", "not_found");
 
   await writeAudit({

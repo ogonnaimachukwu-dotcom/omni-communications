@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, Plus } from "lucide-react";
 import { idSchema as projectIdSchema } from "@/core/projects/project.schema";
-import { getProject } from "@/core/projects/project.service";
+import { requireProjectSession } from "@/lib/auth-helpers";
+import { AppError } from "@/lib/errors";
 import { parseListCampaignsQuery } from "@/core/campaigns/campaign.schema";
 import { listCampaigns } from "@/core/campaigns/campaign.service";
 import { buttonVariants } from "@/components/ui/button";
@@ -20,11 +21,20 @@ export default async function CampaignsPage({
   const { projectId } = await params;
   const pid = projectIdSchema.safeParse(projectId);
   if (!pid.success) notFound();
-  const project = await getProject(pid.data);
-  if (!project) notFound();
+
+  let user, project;
+  try {
+    ({ user, project } = await requireProjectSession(pid.data));
+  } catch (err) {
+    if (err instanceof AppError && err.statusCode === 401) {
+      redirect("/login");
+    }
+    notFound();
+  }
 
   const query = parseListCampaignsQuery(await searchParams);
-  const page = await listCampaigns(project.id, query);
+  const page = await listCampaigns(project.id, query, user.id);
+
 
   return (
     <div className="space-y-6">

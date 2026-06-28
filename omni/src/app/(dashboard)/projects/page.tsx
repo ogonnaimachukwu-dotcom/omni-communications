@@ -1,5 +1,8 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
+import { redirect } from "next/navigation";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
 import { buttonVariants } from "@/components/ui/button";
 import { listProjects } from "@/core/projects/project.service";
 import { parseListProjectsQuery } from "@/core/projects/project.schema";
@@ -12,8 +15,12 @@ export default async function ProjectsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) redirect("/login");
+
   const query = parseListProjectsQuery(await searchParams);
-  const { items, total, page, pageCount } = await listProjects(query);
+  const { items, total, page, pageCount } = await listProjects(query, session.user.id);
+
 
   return (
     <div className="space-y-6">

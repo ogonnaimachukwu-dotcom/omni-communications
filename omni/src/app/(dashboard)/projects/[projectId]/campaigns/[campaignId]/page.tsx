@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
 import { ArrowLeft, Trash2, BarChart3 } from "lucide-react";
 import { idSchema as projectIdSchema } from "@/core/projects/project.schema";
-import { getProject } from "@/core/projects/project.service";
+import { requireProject } from "@/core/projects/project.service";
 import { getCampaign } from "@/core/campaigns/campaign.service";
 import { listLists } from "@/core/distributors/list.service";
 import { listSendingDomains } from "@/core/sending-domains/sending-domain.service";
@@ -33,17 +35,25 @@ export default async function CampaignDetailPage({
   const pid = projectIdSchema.safeParse(projectId);
   if (!pid.success) notFound();
 
-  const project = await getProject(pid.data);
-  if (!project) notFound();
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) redirect("/login");
 
-  const campaign = await getCampaign(project.id, campaignId);
+  let project;
+  try {
+    project = await requireProject(pid.data, session.user.id);
+  } catch {
+    notFound();
+  }
+
+  const campaign = await getCampaign(project.id, campaignId, session.user.id);
   if (!campaign) notFound();
 
   const [lists, domains, signatures] = await Promise.all([
-    listLists(project.id),
-    listSendingDomains(project.id),
-    listSignatures(project.id),
+    listLists(project.id, session.user.id),
+    listSendingDomains(project.id, session.user.id),
+    listSignatures(project.id, session.user.id),
   ]);
+
 
   const editable = campaign.status === "draft";
 

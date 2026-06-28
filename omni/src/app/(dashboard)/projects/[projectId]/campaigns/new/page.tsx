@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
 import { ArrowLeft } from "lucide-react";
 import { idSchema as projectIdSchema } from "@/core/projects/project.schema";
-import { getProject } from "@/core/projects/project.service";
+import { requireProject } from "@/core/projects/project.service";
 import { NewCampaignForm } from "../_components/new-campaign-form";
 import { createCampaignAction } from "../actions";
 
@@ -14,8 +16,17 @@ export default async function NewCampaignPage({
   const { projectId } = await params;
   const pid = projectIdSchema.safeParse(projectId);
   if (!pid.success) notFound();
-  const project = await getProject(pid.data);
-  if (!project) notFound();
+
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) redirect("/login");
+
+  let project;
+  try {
+    project = await requireProject(pid.data, session.user.id);
+  } catch {
+    notFound();
+  }
+
 
   return (
     <div className="space-y-6">

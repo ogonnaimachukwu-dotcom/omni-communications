@@ -17,6 +17,13 @@ vi.mock("@/db", () => {
         where: mockWhere,
         returning: mockReturning,
       })),
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(() => Promise.resolve([{ userId: "user123" }])),
+          })),
+        })),
+      })),
     },
   };
 });
@@ -101,7 +108,7 @@ describe("sendRecipient", () => {
     vi.spyOn(emailLib, "getTransport").mockResolvedValue(mockTransport as unknown as EmailTransport);
 
     vi.mock("../projects/project.repository", () => ({
-      findById: vi.fn().mockResolvedValue({ id: "proj1", name: "My Project", ceoName: "CEO" }),
+      findAccessibleProject: vi.fn().mockResolvedValue({ id: "proj1", name: "My Project", ceoName: "CEO" }),
     }));
     vi.mock("../mailboxes/mailbox.repository", () => ({
       findById: vi.fn().mockResolvedValue({ id: "mb1", email: "ceo@domain.com", provider: "gmail" }),

@@ -1,7 +1,9 @@
 import { and, count, desc, eq, ilike, inArray, isNull, isNotNull, or, sql } from "drizzle-orm";
 import { db as defaultDb, type DB } from "@/db";
+import { trace } from "@/lib/tracing";
 import {
   projects,
+  projectMembers,
   distributors,
   campaigns,
   campaignRecipients,
@@ -14,9 +16,8 @@ import type {
 } from "./project.schema";
 
 /**
- * Data-access for projects. No business rules live here — only typed Drizzle
- * queries against the `projects` table (the tenant root, defined in Batch 1).
- * The service layer is the only caller.
+ * Data-access for projects. Enforces user-scoping at the database boundary to
+ * prevent bypass / IDOR vulnerabilities.
  */
 
 export type ProjectRow = typeof projects.$inferSelect;
@@ -48,30 +49,91 @@ function toColumns(input: CreateProjectInput | UpdateProjectInput) {
 }
 
 export async function create(
-  input: CreateProjectInput,
+  input: CreateProjectInput & { ownerId: string },
   db: DB = defaultDb,
 ): Promise<ProjectRow> {
-  const [row] = await db.insert(projects).values(toColumns(input)).returning();
-  return row;
+  return db.transaction(async (tx) => {
+    const [project] = await tx.insert(projects).values(toColumns(input)).returning();
+    await tx.insert(projectMembers).values({
+      projectId: project.id,
+      userId: input.ownerId,
+      role: "owner",
+    });
+    return project;
+  });
 }
 
-export async function findById(
+export async function findAccessibleProject(
   id: string,
+  userId: string,
   opts: { includeDeleted?: boolean } = {},
   db: DB = defaultDb,
 ): Promise<ProjectRow | null> {
-  const where = opts.includeDeleted
-    ? eq(projects.id, id)
-    : and(eq(projects.id, id), isNull(projects.deletedAt));
-  const [row] = await db.select().from(projects).where(where).limit(1);
-  return row ?? null;
+  return trace("db.findAccessibleProject", async () => {
+    const conditions = [
+      eq(projects.id, id),
+      eq(projectMembers.userId, userId),
+    ];
+    if (!opts.includeDeleted) {
+      conditions.push(isNull(projects.deletedAt));
+    }
+    const [row] = await db
+      .select({
+        id: projects.id,
+        name: projects.name,
+        ceoName: projects.ceoName,
+        companyName: projects.companyName,
+        notes: projects.notes,
+        status: projects.status,
+        createdAt: projects.createdAt,
+        updatedAt: projects.updatedAt,
+        deletedAt: projects.deletedAt,
+      })
+      .from(projects)
+      .innerJoin(projectMembers, eq(projects.id, projectMembers.projectId))
+      .where(and(...conditions))
+      .limit(1);
+    return row ?? null;
+  });
+}
+
+export async function isMember(
+  projectId: string,
+  userId: string,
+  db: DB = defaultDb,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ count: count() })
+    .from(projectMembers)
+    .where(
+      and(
+        eq(projectMembers.projectId, projectId),
+        eq(projectMembers.userId, userId),
+      ),
+    );
+  return (row?.count ?? 0) > 0;
+}
+
+export async function checkProjectExistsOnly(
+  id: string,
+  db: DB = defaultDb,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ count: count() })
+    .from(projects)
+    .where(and(eq(projects.id, id), isNull(projects.deletedAt)));
+  return (row?.count ?? 0) > 0;
 }
 
 export async function update(
   id: string,
+  userId: string,
   input: UpdateProjectInput,
   db: DB = defaultDb,
 ): Promise<ProjectRow | null> {
+  const accessible = await findAccessibleProject(id, userId, {}, db);
+  if (!accessible) return null;
+
   const [row] = await db
     .update(projects)
     .set(toColumns(input))
@@ -82,9 +144,13 @@ export async function update(
 
 export async function setStatus(
   id: string,
+  userId: string,
   status: ProjectStatus,
   db: DB = defaultDb,
 ): Promise<ProjectRow | null> {
+  const accessible = await findAccessibleProject(id, userId, {}, db);
+  if (!accessible) return null;
+
   const [row] = await db
     .update(projects)
     .set({ status })
@@ -93,7 +159,14 @@ export async function setStatus(
   return row ?? null;
 }
 
-export async function softDelete(id: string, db: DB = defaultDb): Promise<ProjectRow | null> {
+export async function softDelete(
+  id: string,
+  userId: string,
+  db: DB = defaultDb,
+): Promise<ProjectRow | null> {
+  const accessible = await findAccessibleProject(id, userId, {}, db);
+  if (!accessible) return null;
+
   const [row] = await db
     .update(projects)
     .set({ deletedAt: new Date() })
@@ -102,7 +175,14 @@ export async function softDelete(id: string, db: DB = defaultDb): Promise<Projec
   return row ?? null;
 }
 
-export async function restore(id: string, db: DB = defaultDb): Promise<ProjectRow | null> {
+export async function restore(
+  id: string,
+  userId: string,
+  db: DB = defaultDb,
+): Promise<ProjectRow | null> {
+  const accessible = await findAccessibleProject(id, userId, { includeDeleted: true }, db);
+  if (!accessible) return null;
+
   const [row] = await db
     .update(projects)
     .set({ deletedAt: null })
@@ -113,12 +193,14 @@ export async function restore(id: string, db: DB = defaultDb): Promise<ProjectRo
 
 export async function list(
   query: ListProjectsQuery,
+  userId: string,
   db: DB = defaultDb,
 ): Promise<PagedProjects> {
   const { q, status, trash, page, pageSize } = query;
 
   const conditions = [
     trash ? isNotNull(projects.deletedAt) : isNull(projects.deletedAt),
+    eq(projectMembers.userId, userId),
   ];
   if (status) conditions.push(eq(projects.status, status));
   if (q) {
@@ -135,11 +217,23 @@ export async function list(
   const [{ value: total }] = await db
     .select({ value: count() })
     .from(projects)
+    .innerJoin(projectMembers, eq(projects.id, projectMembers.projectId))
     .where(where);
 
   const items = await db
-    .select()
+    .select({
+      id: projects.id,
+      name: projects.name,
+      ceoName: projects.ceoName,
+      companyName: projects.companyName,
+      notes: projects.notes,
+      status: projects.status,
+      createdAt: projects.createdAt,
+      updatedAt: projects.updatedAt,
+      deletedAt: projects.deletedAt,
+    })
     .from(projects)
+    .innerJoin(projectMembers, eq(projects.id, projectMembers.projectId))
     .where(where)
     .orderBy(desc(projects.updatedAt))
     .limit(pageSize)
@@ -153,6 +247,7 @@ export async function list(
     pageCount: Math.max(1, Math.ceil(total / pageSize)),
   };
 }
+
 
 /**
  * KPI rollups for the detail page. These query the dependent tables that

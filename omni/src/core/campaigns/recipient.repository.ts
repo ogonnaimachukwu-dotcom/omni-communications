@@ -1,5 +1,6 @@
-import { and, eq, inArray, isNull, count } from "drizzle-orm";
+import { and, eq, inArray, isNull, count, gt, desc, isNotNull } from "drizzle-orm";
 import { db as defaultDb, type DB } from "@/db";
+import { trace } from "@/lib/tracing";
 import {
   distributors,
   distributorTags,
@@ -61,6 +62,81 @@ export async function resolveAudience(
   return rows.map((r) => ({ ...r, fields: r.fields ?? {} }));
 }
 
+/** Resolve the next page of audience members using keyset pagination. */
+export async function resolveAudiencePage(
+  projectId: string,
+  listId: string,
+  opts: { 
+    tagId?: string; 
+    subscription?: "subscribed" | "unsubscribed" | "bounced" | "complained";
+    afterId?: string | null;
+    limit?: number;
+  } = {},
+  conn: DB = defaultDb,
+): Promise<AudienceMember[]> {
+  const conditions = [
+    eq(distributors.projectId, projectId),
+    eq(distributors.listId, listId),
+    isNull(distributors.deletedAt),
+    isNull(distributors.archivedAt),
+    eq(distributors.status, opts.subscription ?? "subscribed"),
+  ];
+
+  if (opts.tagId) {
+    conditions.push(
+      inArray(
+        distributors.id,
+        conn
+          .select({ id: distributorTags.distributorId })
+          .from(distributorTags)
+          .where(eq(distributorTags.tagId, opts.tagId)),
+      ),
+    );
+  }
+
+  if (opts.afterId) {
+    conditions.push(gt(distributors.id, opts.afterId));
+  }
+
+  const query = conn
+    .select({
+      distributorId: distributors.id,
+      email: distributors.email,
+      name: distributors.name,
+      fields: distributors.fields,
+      unsubscribeToken: distributors.unsubscribeToken,
+    })
+    .from(distributors)
+    .where(and(...conditions))
+    .orderBy(distributors.id);
+
+  if (opts.limit) {
+    query.limit(opts.limit);
+  }
+
+  const rows = await query;
+  return rows.map((r) => ({ ...r, fields: r.fields ?? {} }));
+}
+
+/** Get the largest distributor ID already enqueued for a campaign. */
+export async function getLastEnqueuedDistributorId(
+  campaignId: string,
+  conn: DB = defaultDb,
+): Promise<string | null> {
+  const [row] = await conn
+    .select({ distributorId: campaignRecipients.distributorId })
+    .from(campaignRecipients)
+    .where(
+      and(
+        eq(campaignRecipients.campaignId, campaignId),
+        isNotNull(campaignRecipients.distributorId),
+      )
+    )
+    .orderBy(desc(campaignRecipients.distributorId))
+    .limit(1);
+  return row?.distributorId ?? null;
+}
+
 export interface FreezeResult {
   queued: number;
   suppressed: number;
@@ -77,29 +153,31 @@ export async function freezeRecipients(
   suppressed: Set<string>,
   conn: DB = defaultDb,
 ): Promise<FreezeResult> {
-  let queued = 0;
-  let suppressedCount = 0;
-  const rows = audience.map((m) => {
-    const isSuppressed = suppressed.has(m.email.toLowerCase());
-    if (isSuppressed) suppressedCount++;
-    else queued++;
-    return {
-      projectId,
-      campaignId,
-      distributorId: m.distributorId,
-      email: m.email,
-      status: (isSuppressed ? "suppressed" : "queued") as RecipientStatus,
-    };
-  });
+  return trace("db.freezeRecipients", async () => {
+    let queued = 0;
+    let suppressedCount = 0;
+    const rows = audience.map((m) => {
+      const isSuppressed = suppressed.has(m.email.toLowerCase());
+      if (isSuppressed) suppressedCount++;
+      else queued++;
+      return {
+        projectId,
+        campaignId,
+        distributorId: m.distributorId,
+        email: m.email,
+        status: (isSuppressed ? "suppressed" : "queued") as RecipientStatus,
+      };
+    });
 
-  const CHUNK = 500;
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    await conn
-      .insert(campaignRecipients)
-      .values(rows.slice(i, i + CHUNK))
-      .onConflictDoNothing({ target: [campaignRecipients.campaignId, campaignRecipients.email] });
-  }
-  return { queued, suppressed: suppressedCount };
+    const CHUNK = 500;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      await conn
+        .insert(campaignRecipients)
+        .values(rows.slice(i, i + CHUNK))
+        .onConflictDoNothing({ target: [campaignRecipients.campaignId, campaignRecipients.email] });
+    }
+    return { queued, suppressed: suppressedCount };
+  });
 }
 
 export async function queuedRecipientIds(campaignId: string, conn: DB = defaultDb): Promise<string[]> {

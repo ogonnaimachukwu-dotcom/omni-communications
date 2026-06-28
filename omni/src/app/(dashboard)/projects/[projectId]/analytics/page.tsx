@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
 import { ArrowLeft, Send, MailCheck, MousePointerClick, UserMinus, Mail } from "lucide-react";
 import { idSchema as projectIdSchema } from "@/core/projects/project.schema";
-import { getProject } from "@/core/projects/project.service";
+import { requireProject } from "@/core/projects/project.service";
 import { getProjectAnalytics } from "@/core/analytics/analytics.service";
 import { resolveRange, DEFAULT_RANGE_DAYS } from "@/core/analytics/analytics.schema";
 import { formatNumber } from "@/lib/format";
@@ -27,14 +29,23 @@ export default async function ProjectAnalyticsPage({
   const { projectId } = await params;
   const pid = projectIdSchema.safeParse(projectId);
   if (!pid.success) notFound();
-  const project = await getProject(pid.data);
-  if (!project) notFound();
+
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) redirect("/login");
+
+  let project;
+  try {
+    project = await requireProject(pid.data, session.user.id);
+  } catch {
+    notFound();
+  }
 
   const raw = await searchParams;
   const range = resolveRange(raw);
   const activeDays = Number(Array.isArray(raw.days) ? raw.days[0] : raw.days) || DEFAULT_RANGE_DAYS;
-  const a = await getProjectAnalytics(project.id, range);
+  const a = await getProjectAnalytics(project.id, range, session.user.id);
   const basePath = `/projects/${project.id}/analytics`;
+
 
   return (
     <div className="space-y-6">

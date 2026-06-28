@@ -1,4 +1,5 @@
 import Papa from "papaparse";
+import { AppError } from "@/lib/errors";
 import { db } from "@/db";
 import { writeAudit } from "@/lib/audit";
 import * as repo from "./distributor.repository";
@@ -23,6 +24,8 @@ import type {
   BulkActionInput,
 } from "./distributor.schema";
 import type { CommitImportInput } from "./import.schema";
+import { getAccessibleProject } from "@/core/projects/project.service";
+
 
 /**
  * Distributor domain service — the single home for distributor business rules.
@@ -32,12 +35,13 @@ import type { CommitImportInput } from "./import.schema";
 
 export type DistributorErrorCode = "not_found" | "conflict" | "validation";
 
-export class DistributorError extends Error {
+export class DistributorError extends AppError {
   constructor(
     message: string,
-    public readonly code: DistributorErrorCode = "conflict",
+    code: DistributorErrorCode = "conflict",
+    statusCode: number = 400,
   ) {
-    super(message);
+    super(message, code, statusCode);
     this.name = "DistributorError";
   }
 }
@@ -89,19 +93,26 @@ async function assertListInProject(projectId: string, listId: string) {
 
 /* ---- Reads ------------------------------------------------------------ */
 
-export function listDistributors(
+export async function listDistributors(
   projectId: string,
   query: ListDistributorsQuery,
+  userId: string,
 ): Promise<PagedDistributors> {
+  const accessible = await getAccessibleProject(projectId, userId);
+  if (!accessible) throw new DistributorError("Project not found", "not_found");
   return repo.list(projectId, query);
 }
 
-export function getDistributor(
+export async function getDistributor(
   projectId: string,
   id: string,
+  userId: string,
 ): Promise<DistributorWithTags | null> {
+  const accessible = await getAccessibleProject(projectId, userId);
+  if (!accessible) return null;
   return repo.findById(projectId, id);
 }
+
 
 /* ---- Mutations -------------------------------------------------------- */
 
@@ -110,9 +121,12 @@ export async function createDistributor(
   input: CreateDistributorInput,
   actor: Actor,
 ): Promise<DistributorWithTags> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new DistributorError("Project not found", "not_found");
   await assertListInProject(projectId, input.listId);
 
-  const defs = await customFields.fieldDefs(projectId);
+
+  const defs = await customFields.fieldDefs(projectId, actor.userId);
   const fields = prepareFields(defs, input.fields);
 
   const suppressed = new Set(await repo.suppressedEmails(projectId));
@@ -160,10 +174,13 @@ export async function updateDistributor(
   input: UpdateDistributorInput,
   actor: Actor,
 ): Promise<DistributorWithTags> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new DistributorError("Project not found", "not_found");
   const existing = await repo.findById(projectId, id);
+
   if (!existing) throw new DistributorError("Distributor not found", "not_found");
 
-  const defs = await customFields.fieldDefs(projectId);
+  const defs = await customFields.fieldDefs(projectId, actor.userId);
   const fields = prepareFields(defs, input.fields);
 
   try {
@@ -206,7 +223,10 @@ export async function bulkAction(
   input: BulkActionInput,
   actor: Actor,
 ): Promise<number> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new DistributorError("Project not found", "not_found");
   let affected = 0;
+
 
   switch (input.action) {
     case "archive":
@@ -248,10 +268,14 @@ export async function bulkAction(
 export async function exportCsv(
   projectId: string,
   query: ListDistributorsQuery,
+  userId: string,
 ): Promise<{ filename: string; csv: string }> {
+  const accessible = await getAccessibleProject(projectId, userId);
+  if (!accessible) throw new DistributorError("Project not found", "not_found");
   const [rows, defs] = await Promise.all([
+
     repo.listForExport(projectId, query),
-    customFields.fieldDefs(projectId),
+    customFields.fieldDefs(projectId, userId),
   ]);
 
   const records = rows.map((r) => {
@@ -294,12 +318,16 @@ export async function previewImport(
   projectId: string,
   listId: string,
   fileText: string,
+  userId: string,
   mapping?: ImportMapping,
 ): Promise<ImportPreview> {
+  const accessible = await getAccessibleProject(projectId, userId);
+  if (!accessible) throw new DistributorError("Project not found", "not_found");
   await assertListInProject(projectId, listId);
 
+
   const parsed = parseCsv(fileText);
-  const defs = await customFields.fieldDefs(projectId);
+  const defs = await customFields.fieldDefs(projectId, userId);
   const resolved = mapping ?? suggestMapping(parsed.headers, defs);
 
   const [existing, other] = await Promise.all([
@@ -333,10 +361,13 @@ export async function commitImport(
   fileText: string,
   actor: Actor,
 ): Promise<ImportResult> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new DistributorError("Project not found", "not_found");
   await assertListInProject(projectId, input.listId);
 
+
   const parsed = parseCsv(fileText);
-  const defs = await customFields.fieldDefs(projectId);
+  const defs = await customFields.fieldDefs(projectId, actor.userId);
 
   const [existing, other, suppressedList] = await Promise.all([
     repo.emailsInList(input.listId),

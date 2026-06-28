@@ -13,6 +13,7 @@ import {
 async function requireSession() {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) redirect("/login");
+  return session;
 }
 
 export async function exportAnalyticsAction(
@@ -20,14 +21,15 @@ export async function exportAnalyticsAction(
   kind: string,
   raw: RawSearchParams,
 ): Promise<{ filename: string; csv: string }> {
-  await requireSession();
+  const session = await requireSession();
   const k = exportKindSchema.parse(kind);
 
   if (k === "timeseries") {
-    return { filename: `analytics-timeseries.csv`, csv: await exportTimeseriesCsv(projectId, resolveRange(raw)) };
+    return { filename: `analytics-timeseries.csv`, csv: await exportTimeseriesCsv(projectId, resolveRange(raw), session.user.id) };
   }
   if (k === "suppressions") {
-    return { filename: `analytics-suppressions.csv`, csv: await exportSuppressionsCsv(projectId) };
+    return { filename: `analytics-suppressions.csv`, csv: await exportSuppressionsCsv(projectId, session.user.id) };
   }
-  return { filename: `analytics-campaigns.csv`, csv: await exportCampaignsCsv(projectId) };
+  return { filename: `analytics-campaigns.csv`, csv: await exportCampaignsCsv(projectId, session.user.id) };
 }
+

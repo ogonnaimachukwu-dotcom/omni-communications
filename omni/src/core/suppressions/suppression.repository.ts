@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db as defaultDb, type DB } from "@/db";
 import { suppressions, distributors } from "@/db/schema";
 
@@ -43,6 +43,24 @@ export async function emails(projectId: string, conn: DB = defaultDb): Promise<S
     .select({ email: suppressions.email })
     .from(suppressions)
     .where(eq(suppressions.projectId, projectId));
+  return new Set(rows.map((r) => r.email.toLowerCase()));
+}
+
+export async function emailsInBatch(
+  projectId: string,
+  batchEmails: string[],
+  conn: DB = defaultDb,
+): Promise<Set<string>> {
+  if (batchEmails.length === 0) return new Set();
+  const rows = await conn
+    .select({ email: suppressions.email })
+    .from(suppressions)
+    .where(
+      and(
+        eq(suppressions.projectId, projectId),
+        inArray(suppressions.email, batchEmails.map((e) => e.toLowerCase()))
+      )
+    );
   return new Set(rows.map((r) => r.email.toLowerCase()));
 }
 

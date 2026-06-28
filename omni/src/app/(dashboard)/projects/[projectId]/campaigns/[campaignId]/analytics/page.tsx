@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
 import { ArrowLeft, Send, MailCheck, MousePointerClick, Mail } from "lucide-react";
 import { idSchema as projectIdSchema } from "@/core/projects/project.schema";
-import { getProject } from "@/core/projects/project.service";
+import { requireProject } from "@/core/projects/project.service";
 import { getCampaign } from "@/core/campaigns/campaign.service";
 import { getCampaignAnalytics } from "@/core/analytics/analytics.service";
 import { formatNumber } from "@/lib/format";
@@ -20,12 +22,22 @@ export default async function CampaignAnalyticsPage({
   const { projectId, campaignId } = await params;
   const pid = projectIdSchema.safeParse(projectId);
   if (!pid.success) notFound();
-  const project = await getProject(pid.data);
-  if (!project) notFound();
-  const campaign = await getCampaign(project.id, campaignId);
+
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) redirect("/login");
+
+  let project;
+  try {
+    project = await requireProject(pid.data, session.user.id);
+  } catch {
+    notFound();
+  }
+
+  const campaign = await getCampaign(project.id, campaignId, session.user.id);
   if (!campaign) notFound();
 
-  const a = await getCampaignAnalytics(project.id, campaign.id);
+  const a = await getCampaignAnalytics(project.id, campaign.id, session.user.id);
+
 
   return (
     <div className="space-y-6">

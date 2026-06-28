@@ -1,5 +1,7 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
 import { ArrowLeft } from "lucide-react";
 import {
   Card,
@@ -9,7 +11,7 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { idSchema } from "@/core/projects/project.schema";
-import { getProject } from "@/core/projects/project.service";
+import { requireProject } from "@/core/projects/project.service";
 import { ProjectForm } from "../../_components/project-form";
 import { DangerZone } from "../../_components/danger-zone";
 
@@ -22,8 +24,16 @@ export default async function ProjectSettingsPage({
   const id = idSchema.safeParse(projectId);
   if (!id.success) notFound();
 
-  const project = await getProject(id.data);
-  if (!project) notFound();
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) redirect("/login");
+
+  let project;
+  try {
+    project = await requireProject(id.data, session.user.id);
+  } catch {
+    notFound();
+  }
+
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">

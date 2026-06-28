@@ -1,16 +1,19 @@
 import { writeAudit } from "@/lib/audit";
+import { AppError } from "@/lib/errors";
 import * as repo from "./tag.repository";
 import type { TagRow, TagWithCount } from "./tag.repository";
 import type { CreateTagInput, UpdateTagInput } from "./tag.schema";
+import { getAccessibleProject } from "@/core/projects/project.service";
 
 export { type TagRow, type TagWithCount } from "./tag.repository";
 
-export class TagError extends Error {
+export class TagError extends AppError {
   constructor(
     message: string,
-    public readonly code: "not_found" | "conflict" = "conflict",
+    code: "not_found" | "conflict" = "conflict",
+    statusCode: number = 400,
   ) {
-    super(message);
+    super(message, code, statusCode);
     this.name = "TagError";
   }
 }
@@ -20,11 +23,15 @@ interface Actor {
   ipAddress?: string | null;
 }
 
-export function listTags(projectId: string): Promise<TagRow[]> {
+export async function listTags(projectId: string, userId: string): Promise<TagRow[]> {
+  const accessible = await getAccessibleProject(projectId, userId);
+  if (!accessible) throw new TagError("Tag not found", "not_found");
   return repo.findAll(projectId);
 }
 
-export function listTagsWithCounts(projectId: string): Promise<TagWithCount[]> {
+export async function listTagsWithCounts(projectId: string, userId: string): Promise<TagWithCount[]> {
+  const accessible = await getAccessibleProject(projectId, userId);
+  if (!accessible) throw new TagError("Tag not found", "not_found");
   return repo.findAllWithCounts(projectId);
 }
 
@@ -33,6 +40,8 @@ export async function createTag(
   input: CreateTagInput,
   actor: Actor,
 ): Promise<TagRow> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new TagError("Tag not found", "not_found");
   try {
     const created = await repo.create({
       projectId,
@@ -65,6 +74,8 @@ export async function updateTag(
   input: UpdateTagInput,
   actor: Actor,
 ): Promise<TagRow> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new TagError("Tag not found", "not_found");
   try {
     const updated = await repo.update(projectId, id, {
       name: input.name,
@@ -97,6 +108,8 @@ export async function deleteTag(
   id: string,
   actor: Actor,
 ): Promise<void> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new TagError("Tag not found", "not_found");
   const deleted = await repo.remove(projectId, id);
   if (!deleted) throw new TagError("Tag not found", "not_found");
 

@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
 import { ArrowLeft } from "lucide-react";
 import { idSchema } from "@/core/projects/project.schema";
-import { getProject } from "@/core/projects/project.service";
+import { requireProject } from "@/core/projects/project.service";
 import { listLists } from "@/core/distributors/list.service";
 import { listCustomFields } from "@/core/custom-fields/custom-field.service";
 import { ImportWizard } from "../_components/import-wizard";
@@ -16,13 +18,21 @@ export default async function ImportPage({
   const id = idSchema.safeParse(projectId);
   if (!id.success) notFound();
 
-  const project = await getProject(id.data);
-  if (!project) notFound();
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) redirect("/login");
+
+  let project;
+  try {
+    project = await requireProject(id.data, session.user.id);
+  } catch {
+    notFound();
+  }
 
   const [lists, fieldDefs] = await Promise.all([
-    listLists(project.id),
-    listCustomFields(project.id),
+    listLists(project.id, session.user.id),
+    listCustomFields(project.id, session.user.id),
   ]);
+
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">

@@ -14,6 +14,11 @@ services:
       timeout: 5s
       retries: 5
     networks: [internal]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   migrate:
     build: { context: .., dockerfile: docker/Dockerfile, target: migrate }
@@ -22,6 +27,11 @@ services:
       db: { condition: service_healthy }
     networks: [internal]
     restart: "no"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   web:
     build: { context: .., dockerfile: docker/Dockerfile, target: web }
@@ -31,6 +41,11 @@ services:
       migrate: { condition: service_completed_successfully }
     networks: [internal]
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   worker:
     build: { context: .., dockerfile: docker/Dockerfile, target: worker }
@@ -40,6 +55,11 @@ services:
       migrate: { condition: service_completed_successfully }
     networks: [internal]
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   caddy:
     image: caddy:2
@@ -51,6 +71,11 @@ services:
       - caddyconfig:/config
     depends_on: [web]
     networks: [internal]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   pgdata:

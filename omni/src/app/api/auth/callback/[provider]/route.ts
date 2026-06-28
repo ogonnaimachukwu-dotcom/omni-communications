@@ -1,18 +1,25 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { env } from "@/env";
 import { sealToString, openFromString } from "@/lib/crypto/envelope";
 import * as mailboxRepo from "@/core/mailboxes/mailbox.repository";
+import { auth } from "@/lib/auth";
+import { requireProject } from "@/core/projects/project.service";
+
+import { withLogging, logStorage, logger } from "@/lib/logger";
+import { trace } from "@/lib/tracing";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ provider: string }> }
 ): Promise<Response> {
-  const { provider } = await params;
-  const { searchParams } = new URL(request.url);
-  const code = searchParams.get("code");
-  const state = searchParams.get("state");
-  const error = searchParams.get("error");
+  return withLogging(request, async () => {
+    return trace("api.auth.callback", async () => {
+    const { provider } = await params;
+    const { searchParams } = new URL(request.url);
+    const code = searchParams.get("code");
+    const state = searchParams.get("state");
+    const error = searchParams.get("error");
 
   const cookieStore = await cookies();
   const csrfCookie = cookieStore.get("omni_oauth_csrf")?.value;
@@ -37,7 +44,29 @@ export async function GET(
     return new Response("CSRF validation failed", { status: 400 });
   }
 
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   const { projectId } = statePayload;
+
+  const store = logStorage.getStore();
+  if (store) {
+    store.userId = session.user.id;
+    store.projectId = projectId;
+  }
+
+  try {
+    await requireProject(projectId, session.user.id);
+  } catch (err) {
+    const error = err as { code?: string };
+    if (error.code === "not_found") {
+      return new Response("Project not found", { status: 404 });
+    }
+    return new Response("Forbidden", { status: 403 });
+  }
+
 
   let email = "";
   let credentialsStr = "";
@@ -155,7 +184,7 @@ export async function GET(
       });
     }
   } catch (err) {
-    console.error("[OAuth Callback Callback Error]", err);
+    logger.error("OAuth Callback Error", err);
     return new Response(err instanceof Error ? err.message : "Authentication failed", { status: 500 });
   }
 
@@ -163,4 +192,6 @@ export async function GET(
   const response = NextResponse.redirect(`${env.APP_URL}/projects/${projectId}/mailboxes`);
   response.cookies.delete("omni_oauth_csrf");
   return response;
+    });
+  });
 }

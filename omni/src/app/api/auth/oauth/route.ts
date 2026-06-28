@@ -2,20 +2,42 @@ import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { env } from "@/env";
+import { requireProject } from "@/core/projects/project.service";
+import { withLogging, logStorage } from "@/lib/logger";
+import { trace } from "@/lib/tracing";
 
 export async function GET(request: Request): Promise<Response> {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) {
-    return new Response("Unauthorized", { status: 401 });
-  }
+  return withLogging(request, async () => {
+    return trace("api.auth.oauth", async () => {
+    const session = await auth.api.getSession({ headers: await headers() });
+    if (!session) {
+      return new Response("Unauthorized", { status: 401 });
+    }
 
-  const { searchParams } = new URL(request.url);
-  const provider = searchParams.get("provider");
-  const projectId = searchParams.get("projectId");
+    const { searchParams } = new URL(request.url);
+    const provider = searchParams.get("provider");
+    const projectId = searchParams.get("projectId");
+
+    const store = logStorage.getStore();
+    if (store) {
+      store.userId = session.user.id;
+      if (projectId) store.projectId = projectId;
+    }
 
   if (!provider || !projectId || (provider !== "google" && provider !== "microsoft")) {
     return new Response("Bad Request: missing provider or projectId", { status: 400 });
   }
+
+  try {
+    await requireProject(projectId, session.user.id);
+  } catch (err) {
+    const error = err as { code?: string };
+    if (error.code === "not_found") {
+      return new Response("Project not found", { status: 404 });
+    }
+    return new Response("Forbidden", { status: 403 });
+  }
+
 
   const csrfNonce = crypto.randomUUID();
   const statePayload = {
@@ -63,4 +85,6 @@ export async function GET(request: Request): Promise<Response> {
   });
 
   return response;
+    });
+  });
 }

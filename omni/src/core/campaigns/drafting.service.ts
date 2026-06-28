@@ -1,6 +1,7 @@
 import { writeAudit } from "@/lib/audit";
 import { getAiProvider, AiUnavailableError } from "@/lib/ai";
 import type { DraftCampaignInput } from "./campaign.schema";
+import { getAccessibleProject } from "@/core/projects/project.service";
 
 export interface Actor {
   userId: string;
@@ -22,7 +23,11 @@ export async function draftCampaign(
   input: DraftCampaignInput,
   actor: Actor,
 ): Promise<CampaignDraft> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new Error("Project access denied");
+
   const provider = getAiProvider();
+
   if (!provider) throw new AiUnavailableError();
 
   const result = await provider.draftCampaign({

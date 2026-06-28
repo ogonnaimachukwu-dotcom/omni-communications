@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import type { FormState } from "../actions";
 
 interface Props {
-  status: "draft" | "approved" | "scheduled" | "sending" | "sent" | "failed";
+  status: "draft" | "approved" | "scheduled" | "sending" | "sent" | "failed" | "paused";
   scheduledAt: string | null;
   counts: { total: number; sent: number; delivered: number; failed: number };
   approveAction: (prev: FormState, formData: FormData) => Promise<FormState>;
@@ -95,7 +95,11 @@ export function SendBar({ status, scheduledAt, counts, approveAction, sendAction
         <p className="text-sm text-muted-foreground">Sending in progress…</p>
       )}
 
-      {(status === "sent" || status === "failed" || status === "sending") && (
+      {status === "paused" && (
+        <p className="text-sm text-yellow-600 font-medium">Sending paused.</p>
+      )}
+
+      {(status === "sent" || status === "failed" || status === "sending" || status === "paused") && (
         <dl className="grid grid-cols-2 gap-2 text-sm">
           <Stat label="Recipients" value={counts.total} />
           <Stat label="Sent" value={counts.sent} />

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
+import { requireProjectSessionForAction } from "@/lib/auth-helpers";
 
 import {
   createCampaignSchema,
@@ -36,12 +36,10 @@ export type DraftState =
 
 type Actor = { userId: string; ipAddress: string | null };
 
-async function getActor(): Promise<Actor> {
+async function getActor(projectId: string): Promise<Actor> {
   const h = await headers();
-  const session = await auth.api.getSession({ headers: h });
-  if (!session) redirect("/login");
-  const ipAddress = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  return { userId: session.user.id, ipAddress };
+  const { actor } = await requireProjectSessionForAction(projectId, h);
+  return actor;
 }
 
 function toFormError(error: unknown): FormState {
@@ -73,7 +71,7 @@ export async function createCampaignAction(
   if (!parsed.success) {
     return { status: "error", fieldErrors: parsed.error.flatten().fieldErrors };
   }
-  const actor = await getActor();
+  const actor = await getActor(projectId);
   let id: string;
   try {
     const row = await campaigns.createCampaign(projectId, parsed.data, actor);
@@ -105,7 +103,7 @@ export async function updateCampaignAction(
   if (!parsed.success) {
     return { status: "error", fieldErrors: parsed.error.flatten().fieldErrors };
   }
-  const actor = await getActor();
+  const actor = await getActor(projectId);
   try {
     await campaigns.updateCampaign(projectId, campaignId, parsed.data, actor);
   } catch (e) {
@@ -119,7 +117,7 @@ export async function approveCampaignAction(
   projectId: string,
   campaignId: string,
 ): Promise<FormState> {
-  const actor = await getActor();
+  const actor = await getActor(projectId);
   try {
     await campaigns.approveCampaign(projectId, campaignId, actor);
   } catch (e) {
@@ -143,7 +141,7 @@ export async function sendCampaignAction(
   if (!parsed.success) {
     return { status: "error", fieldErrors: parsed.error.flatten().fieldErrors };
   }
-  const actor = await getActor();
+  const actor = await getActor(projectId);
   try {
     await campaigns.sendCampaign(projectId, campaignId, parsed.data, actor);
   } catch (e) {
@@ -157,7 +155,7 @@ export async function cancelScheduleAction(
   projectId: string,
   campaignId: string,
 ): Promise<FormState> {
-  const actor = await getActor();
+  const actor = await getActor(projectId);
   try {
     await campaigns.cancelSchedule(projectId, campaignId, actor);
   } catch (e) {
@@ -171,7 +169,7 @@ export async function deleteCampaignAction(
   projectId: string,
   campaignId: string,
 ): Promise<void> {
-  const actor = await getActor();
+  const actor = await getActor(projectId);
   await campaigns.deleteCampaign(projectId, campaignId, actor);
   revalidatePath(basePath(projectId));
   redirect(basePath(projectId));
@@ -194,7 +192,7 @@ export async function draftCampaignAction(
   if (!parsed.success) {
     return { status: "error", message: "Describe what you want to say" };
   }
-  const actor = await getActor();
+  const actor = await getActor(projectId);
   try {
     const draft = await runDraft(projectId, parsed.data, actor);
     return { status: "success", subject: draft.subject, bodyHtml: draft.bodyHtml };
@@ -221,7 +219,7 @@ export async function createSignatureAction(
   if (!parsed.success) {
     return { status: "error", fieldErrors: parsed.error.flatten().fieldErrors };
   }
-  const actor = await getActor();
+  const actor = await getActor(projectId);
   try {
     await signatures.createSignature(projectId, parsed.data, actor);
   } catch (e) {
@@ -234,7 +232,7 @@ export async function createSignatureAction(
 export async function deleteSignatureAction(projectId: string, formData: FormData): Promise<void> {
   const check = signatureId.safeParse(formData.get("id"));
   if (!check.success) return;
-  const actor = await getActor();
+  const actor = await getActor(projectId);
   await signatures.deleteSignature(projectId, check.data, actor);
   revalidatePath(basePath(projectId));
 }

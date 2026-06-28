@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { mailboxes } from "@/db/schema";
+import { mailboxes, projectMembers } from "@/db/schema";
 import type { CreateMailboxInput } from "./mailbox.schema";
 
 export type MailboxRow = typeof mailboxes.$inferSelect;
@@ -23,12 +23,32 @@ export async function findByEmail(projectId: string, email: string): Promise<Mai
   return row ?? null;
 }
 
-export async function listByProject(projectId: string): Promise<MailboxRow[]> {
-  return db
-    .select()
+export async function listByProject(projectId: string, userId: string): Promise<MailboxRow[]> {
+  const items = await db
+    .select({
+      id: mailboxes.id,
+      projectId: mailboxes.projectId,
+      email: mailboxes.email,
+      provider: mailboxes.provider,
+      status: mailboxes.status,
+      credentials: mailboxes.credentials,
+      tokenExpiresAt: mailboxes.tokenExpiresAt,
+      createdAt: mailboxes.createdAt,
+      updatedAt: mailboxes.updatedAt,
+      lastSyncedAt: mailboxes.lastSyncedAt,
+      syncCursor: mailboxes.syncCursor,
+    })
     .from(mailboxes)
-    .where(eq(mailboxes.projectId, projectId));
+    .innerJoin(projectMembers, eq(mailboxes.projectId, projectMembers.projectId))
+    .where(
+      and(
+        eq(mailboxes.projectId, projectId),
+        eq(projectMembers.userId, userId),
+      ),
+    );
+  return items;
 }
+
 
 export async function listActive(): Promise<MailboxRow[]> {
   return db

@@ -1,5 +1,8 @@
 import Link from "next/link";
 import { ArrowRight, Send } from "lucide-react";
+import { redirect } from "next/navigation";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
 import { listProjects } from "@/core/projects/project.service";
 import { parseListProjectsQuery } from "@/core/projects/project.schema";
 
@@ -8,8 +11,12 @@ import { parseListProjectsQuery } from "@/core/projects/project.schema";
  * picker rather than a cross-project table.
  */
 export default async function CampaignsHomePage() {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) redirect("/login");
+
   const query = parseListProjectsQuery({ pageSize: "50" });
-  const { items } = await listProjects(query);
+  const { items } = await listProjects(query, session.user.id);
+
 
   return (
     <div className="space-y-6">

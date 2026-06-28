@@ -17,6 +17,7 @@ export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 export interface SendCampaignJob {
   campaignId: string;
   projectId: string;
+  correlationId?: string;
   /**
    * Optional audience refinement, captured at send/schedule time and frozen
    * into the recipient ledger when this job runs. Carried in the payload so no
@@ -30,8 +31,10 @@ export interface SendCampaignRecipientJob {
   recipientId: string;
   campaignId: string;
   projectId: string;
+  correlationId?: string;
 }
 
 export interface SyncMailboxJob {
   mailboxId: string;
+  correlationId?: string;
 }

@@ -24,27 +24,33 @@ ENV NEXT_TELEMETRY_DISABLED=1 \
     ENCRYPTION_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
     RESEND_API_KEY=re_placeholder \
     RESEND_WEBHOOK_SECRET=whsec_placeholder
-RUN npm run build
+RUN npm run build && npm run build:worker
 
 # ---- Web runtime (Next standalone) ----
 FROM base AS web
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
-COPY --from=build /app/.next/standalone ./
-COPY --from=build /app/.next/static ./.next/static
-COPY --from=build /app/public ./public
+WORKDIR /app
+COPY --chown=node:node --from=build /app/.next/standalone ./
+COPY --chown=node:node --from=build /app/.next/static ./.next/static
+COPY --chown=node:node --from=build /app/public ./public
+USER node
 EXPOSE 3000
 CMD ["node", "server.js"]
 
-# ---- Worker runtime (runs TS via tsx) ----
+# ---- Worker runtime (runs native Node) ----
 FROM base AS worker
 ENV NODE_ENV=production
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-CMD ["npm", "run", "worker"]
+WORKDIR /app
+COPY --chown=node:node --from=deps /app/node_modules ./node_modules
+COPY --chown=node:node --from=build /app/dist ./dist
+USER node
+CMD ["node", "dist/worker.js"]
 
 # ---- Migrator (one-shot: runs Drizzle migrations then exits) ----
 FROM base AS migrate
 ENV NODE_ENV=production
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+WORKDIR /app
+COPY --chown=node:node --from=deps /app/node_modules ./node_modules
+COPY --chown=node:node . .
+USER node
 CMD ["npm", "run", "db:migrate"]

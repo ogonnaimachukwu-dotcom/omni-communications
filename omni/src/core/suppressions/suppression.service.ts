@@ -3,6 +3,8 @@ import { writeAudit } from "@/lib/audit";
 import * as repo from "./suppression.repository";
 import type { SuppressionReason } from "./suppression.repository";
 
+import { getAccessibleProject } from "@/core/projects/project.service";
+
 export interface Actor {
   userId: string;
   ipAddress?: string | null;
@@ -18,10 +20,16 @@ export async function suppress(
   input: { email: string; reason: SuppressionReason; source?: string | null },
   actor?: Actor,
 ): Promise<void> {
+  if (actor?.userId) {
+    const accessible = await getAccessibleProject(projectId, actor.userId);
+    if (!accessible) throw new Error("Project access denied");
+  }
+
   await db.transaction(async (tx) => {
     await repo.add({ projectId, ...input }, tx);
     await repo.reflectOnDistributors(projectId, input.email, input.reason, tx);
   });
+
 
   await writeAudit({
     actorUserId: actor?.userId ?? null,
@@ -39,6 +47,10 @@ export function isSuppressed(projectId: string, email: string): Promise<boolean>
 
 export function suppressedEmails(projectId: string): Promise<Set<string>> {
   return repo.emails(projectId);
+}
+
+export function suppressedEmailsInBatch(projectId: string, emails: string[]): Promise<Set<string>> {
+  return repo.emailsInBatch(projectId, emails);
 }
 
 export function resolveUnsubscribeToken(token: string) {

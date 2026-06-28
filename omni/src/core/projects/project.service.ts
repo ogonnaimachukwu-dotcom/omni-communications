@@ -1,4 +1,5 @@
 import { writeAudit } from "@/lib/audit";
+import { AppError } from "@/lib/errors";
 import * as repo from "./project.repository";
 import type { ProjectRow, ProjectStats, PagedProjects } from "./project.repository";
 import type {
@@ -19,14 +20,15 @@ import type {
  * tx wrapper here if that tradeoff ever changes.
  */
 
-export type ProjectErrorCode = "not_found" | "conflict";
+export type ProjectErrorCode = "not_found" | "forbidden" | "conflict";
 
-export class ProjectError extends Error {
+export class ProjectError extends AppError {
   constructor(
     message: string,
-    public readonly code: ProjectErrorCode = "conflict",
+    code: ProjectErrorCode = "conflict",
+    statusCode: number = 400,
   ) {
-    super(message);
+    super(message, code, statusCode);
     this.name = "ProjectError";
   }
 }
@@ -38,15 +40,18 @@ export interface Actor {
 
 /* ---- Reads ------------------------------------------------------------ */
 
-export function listProjects(query: ListProjectsQuery): Promise<PagedProjects> {
-  return repo.list(query);
+export function listProjects(query: ListProjectsQuery, userId: string): Promise<PagedProjects> {
+  return repo.list(query, userId);
 }
 
-export function getProject(id: string): Promise<ProjectRow | null> {
-  return repo.findById(id);
+export function getAccessibleProject(id: string, userId: string): Promise<ProjectRow | null> {
+  if (!userId || !id || !uuidRegex.test(id)) return Promise.resolve(null);
+  return repo.findAccessibleProject(id, userId);
 }
 
-export function getProjectStats(id: string): Promise<ProjectStats> {
+export async function getAccessibleProjectStats(id: string, userId: string): Promise<ProjectStats> {
+  const accessible = await getAccessibleProject(id, userId);
+  if (!accessible) throw new ProjectError("Project not found", "not_found");
   return repo.stats(id);
 }
 
@@ -56,7 +61,7 @@ export async function createProject(
   input: CreateProjectInput,
   actor: Actor,
 ): Promise<ProjectRow> {
-  const project = await repo.create(input);
+  const project = await repo.create({ ...input, ownerId: actor.userId });
   await writeAudit({
     actorUserId: actor.userId,
     projectId: project.id,
@@ -74,10 +79,10 @@ export async function updateProject(
   input: UpdateProjectInput,
   actor: Actor,
 ): Promise<ProjectRow> {
-  const existing = await repo.findById(id);
+  const existing = await repo.findAccessibleProject(id, actor.userId);
   if (!existing) throw new ProjectError("Project not found", "not_found");
 
-  const updated = await repo.update(id, input);
+  const updated = await repo.update(id, actor.userId, input);
   if (!updated) throw new ProjectError("Project not found", "not_found");
 
   await writeAudit({
@@ -97,11 +102,11 @@ export async function setProjectStatus(
   status: ProjectStatus,
   actor: Actor,
 ): Promise<ProjectRow> {
-  const existing = await repo.findById(id);
+  const existing = await repo.findAccessibleProject(id, actor.userId);
   if (!existing) throw new ProjectError("Project not found", "not_found");
   if (existing.status === status) return existing; // no-op, nothing to audit
 
-  const updated = await repo.setStatus(id, status);
+  const updated = await repo.setStatus(id, actor.userId, status);
   if (!updated) throw new ProjectError("Project not found", "not_found");
 
   await writeAudit({
@@ -117,10 +122,10 @@ export async function setProjectStatus(
 }
 
 export async function softDeleteProject(id: string, actor: Actor): Promise<ProjectRow> {
-  const existing = await repo.findById(id);
+  const existing = await repo.findAccessibleProject(id, actor.userId);
   if (!existing) throw new ProjectError("Project not found", "not_found");
 
-  const deleted = await repo.softDelete(id);
+  const deleted = await repo.softDelete(id, actor.userId);
   if (!deleted) throw new ProjectError("Project not found", "not_found");
 
   await writeAudit({
@@ -136,11 +141,11 @@ export async function softDeleteProject(id: string, actor: Actor): Promise<Proje
 }
 
 export async function restoreProject(id: string, actor: Actor): Promise<ProjectRow> {
-  const existing = await repo.findById(id, { includeDeleted: true });
+  const existing = await repo.findAccessibleProject(id, actor.userId, { includeDeleted: true });
   if (!existing) throw new ProjectError("Project not found", "not_found");
   if (!existing.deletedAt) throw new ProjectError("Project is not deleted", "conflict");
 
-  const restored = await repo.restore(id);
+  const restored = await repo.restore(id, actor.userId);
   if (!restored) throw new ProjectError("Project not found", "not_found");
 
   await writeAudit({
@@ -154,3 +159,32 @@ export async function restoreProject(id: string, actor: Actor): Promise<ProjectR
   });
   return restored;
 }
+
+const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function requireProject(projectId: string, userId: string): Promise<ProjectRow> {
+  if (!userId) {
+    throw new ProjectError("Forbidden", "forbidden");
+  }
+  if (!projectId || !uuidRegex.test(projectId)) {
+    throw new ProjectError("Project not found", "not_found");
+  }
+  const isMember = await repo.isMember(projectId, userId);
+  if (!isMember) {
+    const exists = await repo.checkProjectExistsOnly(projectId);
+    if (!exists) {
+      throw new ProjectError("Project not found", "not_found");
+    }
+    throw new ProjectError("Forbidden", "forbidden");
+  }
+  const project = await repo.findAccessibleProject(projectId, userId);
+  if (!project) {
+    throw new ProjectError("Project not found", "not_found");
+  }
+  return project;
+}
+
+// Deprecated in favor of requireProject
+export const authorizeProjectAccess = requireProject;
+
+

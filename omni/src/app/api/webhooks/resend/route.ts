@@ -5,6 +5,8 @@ import * as recipientRepo from "@/core/campaigns/recipient.repository";
 import * as campaignRepo from "@/core/campaigns/campaign.repository";
 import * as suppressions from "@/core/suppressions/suppression.service";
 import type { EmailEventType } from "@/core/campaigns/recipient.repository";
+import { withLogging, logStorage, logger } from "@/lib/logger";
+import { trace } from "@/lib/tracing";
 
 export const runtime = "nodejs";
 
@@ -56,15 +58,18 @@ function verifySignature(raw: string, headers: Headers): boolean {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const raw = await request.text();
+  return withLogging(request, async () => {
+    return trace("api.webhook.resend", async () => {
+      const raw = await request.text();
 
-  if (!verifySignature(raw, request.headers)) {
-    return NextResponse.json({ error: "invalid signature" }, { status: 401 });
-  }
+      if (!verifySignature(raw, request.headers)) {
+        logger.warn("Invalid signature on webhook");
+        return NextResponse.json({ error: "invalid signature" }, { status: 401 });
+      }
 
-  let event: { type?: string; data?: { email_id?: string } };
-  try {
-    event = JSON.parse(raw);
+      let event: { type?: string; data?: { email_id?: string } };
+      try {
+        event = JSON.parse(raw);
   } catch {
     return NextResponse.json({ error: "invalid payload" }, { status: 400 });
   }
@@ -76,6 +81,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const recipient = await recipientRepo.findByProviderMessageId(providerMessageId);
+
+  const store = logStorage.getStore();
+  if (store && recipient) {
+    store.projectId = recipient.projectId;
+    store.campaignId = recipient.campaignId;
+  }
+
   await recipientRepo.recordEvent({
     projectId: recipient?.projectId ?? null,
     recipientId: recipient?.id ?? null,
@@ -107,4 +119,6 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   return NextResponse.json({ ok: true });
+    });
+  });
 }

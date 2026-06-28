@@ -13,6 +13,7 @@ const eslintConfig = [
       ".next/**",
       "node_modules/**",
       "drizzle/**",
+      "dist/**",
       "next-env.d.ts",
       "**/*.config.{js,mjs,ts}",
     ],

@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import type { FormState, DraftState } from "../actions";
+import { sanitizeHtml } from "@/lib/sanitizer";
 
 type Option = { id: string; label: string };
 
@@ -205,7 +206,7 @@ export function CampaignEditor({
           <p className="mb-2 text-sm font-medium">{subject || "(no subject)"}</p>
           <div
             className="prose prose-sm max-w-none text-sm"
-            dangerouslySetInnerHTML={{ __html: bodyHtml || "<p class='text-muted-foreground'>Nothing yet…</p>" }}
+            dangerouslySetInnerHTML={{ __html: sanitizeHtml(bodyHtml) || "<p class='text-muted-foreground'>Nothing yet…</p>" }}
           />
         </Card>
       </div>

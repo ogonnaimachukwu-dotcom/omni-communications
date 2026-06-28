@@ -20,6 +20,14 @@ import { user } from "./auth-schema";
 
 export const projectStatus = pgEnum("project_status", ["active", "archived"]);
 
+export const projectMemberRole = pgEnum("project_member_role", [
+  "owner",
+  "admin",
+  "member",
+  "viewer",
+]);
+
+
 export const domainVerification = pgEnum("domain_verification", [
   "pending",
   "verified",
@@ -47,6 +55,7 @@ export const campaignStatus = pgEnum("campaign_status", [
   "sending",
   "sent",
   "failed",
+  "paused",
 ]);
 
 export const customFieldType = pgEnum("custom_field_type", [
@@ -65,6 +74,15 @@ export const importStatus = pgEnum("import_status", [
 
 export const mailboxProvider = pgEnum("mailbox_provider", ["gmail", "outlook"]);
 export const mailboxStatus = pgEnum("mailbox_status", ["active", "invalid", "paused"]);
+
+export const sendingProviderType = pgEnum("sending_provider_type", ["resend", "smtp", "ses", "mailgun", "postmark"]);
+export const sendingProviderStatus = pgEnum("sending_provider_status", ["active", "invalid", "disabled"]);
+export const inboxConnectionType = pgEnum("inbox_connection_type", ["imap", "oauth_gmail", "oauth_outlook"]);
+export const inboxConnectionStatus = pgEnum("inbox_connection_status", ["active", "invalid", "disabled"]);
+export const trackingProviderType = pgEnum("tracking_provider_type", ["resend_webhook", "postmark_webhook", "ses_sns"]);
+export const trackingProviderStatus = pgEnum("tracking_provider_status", ["active", "disabled"]);
+export const healthStatus = pgEnum("health_status", ["healthy", "warning", "unhealthy"]);
+export const messageSentiment = pgEnum("message_sentiment", ["positive", "neutral", "negative", "bounce"]);
 
 // The per-recipient send ledger lifecycle.
 export const recipientStatus = pgEnum("recipient_status", [
@@ -109,6 +127,30 @@ export const projects = pgTable(
   },
   (t) => [index("projects_status_idx").on(t.status)],
 );
+
+export const projectMembers = pgTable(
+  "project_members",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: projectMemberRole("role").notNull().default("member"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("project_members_project_user_uidx").on(t.projectId, t.userId),
+    index("project_members_user_idx").on(t.userId),
+  ],
+);
+
 
 /* =========================================================================
  * Sending domains — per-project verified "from" identities for Resend.
@@ -400,6 +442,9 @@ export const campaigns = pgTable(
     mailboxId: uuid("mailbox_id").references(() => mailboxes.id, {
       onDelete: "set null",
     }),
+    communicationProfileId: uuid("communication_profile_id").references(() => communicationProfiles.id, {
+      onDelete: "set null",
+    }),
     signatureId: uuid("signature_id").references(() => signatures.id, {
       onDelete: "set null",
     }),
@@ -430,6 +475,7 @@ export const campaigns = pgTable(
     index("campaigns_project_idx").on(t.projectId),
     index("campaigns_status_idx").on(t.status),
     index("campaigns_mailbox_idx").on(t.mailboxId),
+    index("campaigns_communication_profile_idx").on(t.communicationProfileId),
   ],
 );
 
@@ -528,4 +574,171 @@ export const auditLogs = pgTable(
     index("audit_logs_actor_idx").on(t.actorUserId),
     index("audit_logs_action_idx").on(t.action),
   ],
+);
+
+/* =========================================================================
+ * V1 Decoupled Communication Engine
+ * ====================================================================== */
+
+export const sendingProviders = pgTable(
+  "sending_providers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    type: sendingProviderType("type").notNull(),
+    status: sendingProviderStatus("status").notNull().default("active"),
+    credentials: text("credentials").notNull(), // SealedSecret stringified config JSON
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index("sending_providers_project_idx").on(t.projectId)]
+);
+
+export const inboxConnections = pgTable(
+  "inbox_connections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    type: inboxConnectionType("type").notNull(),
+    status: inboxConnectionStatus("status").notNull().default("active"),
+    credentials: text("credentials").notNull(), // SealedSecret stringified config JSON
+    tokenExpiresAt: timestamp("token_expires_at"),
+    lastSyncedAt: timestamp("last_synced_at"),
+    syncCursor: text("sync_cursor"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index("inbox_connections_project_idx").on(t.projectId),
+    uniqueIndex("inbox_connections_project_email_uidx").on(t.projectId, t.email),
+  ]
+);
+
+export const trackingProviders = pgTable(
+  "tracking_providers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    type: trackingProviderType("type").notNull(),
+    status: trackingProviderStatus("status").notNull().default("active"),
+    config: text("config").notNull(), // SealedSecret stringified webhook secrets/endpoints JSON
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index("tracking_providers_project_idx").on(t.projectId)]
+);
+
+export const communicationProfiles = pgTable(
+  "communication_profiles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    sendingProviderId: uuid("sending_provider_id").references(() => sendingProviders.id, {
+      onDelete: "set null",
+    }),
+    inboxConnectionId: uuid("inbox_connection_id").references(() => inboxConnections.id, {
+      onDelete: "set null",
+    }),
+    trackingProviderId: uuid("tracking_provider_id").references(() => trackingProviders.id, {
+      onDelete: "set null",
+    }),
+    signatureId: uuid("signature_id").references(() => signatures.id, {
+      onDelete: "set null",
+    }),
+    dailyLimit: integer("daily_limit").notNull().default(500),
+    replyAlias: text("reply_alias").notNull(), // from Name
+    timezone: text("timezone").notNull().default("UTC"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index("communication_profiles_project_idx").on(t.projectId)]
+);
+
+export const inboxMessages = pgTable(
+  "inbox_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    inboxConnectionId: uuid("inbox_connection_id")
+      .notNull()
+      .references(() => inboxConnections.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    fromAddress: text("from_address").notNull(),
+    fromName: text("from_name"),
+    subject: text("subject").notNull(),
+    bodyHtml: text("body_html"),
+    bodyText: text("body_text"),
+    isRead: boolean("is_read").notNull().default(false),
+    sentiment: messageSentiment("sentiment").notNull().default("neutral"),
+    aiSuggestedResponse: text("ai_suggested_response"),
+    receivedAt: timestamp("received_at").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("inbox_messages_connection_idx").on(t.inboxConnectionId),
+    index("inbox_messages_project_idx").on(t.projectId),
+  ]
+);
+
+export const outboundReplies = pgTable(
+  "outbound_replies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    inboxMessageId: uuid("inbox_message_id")
+      .notNull()
+      .references(() => inboxMessages.id, { onDelete: "cascade" }),
+    sendingProviderId: uuid("sending_provider_id")
+      .notNull()
+      .references(() => sendingProviders.id, { onDelete: "cascade" }),
+    bodyHtml: text("body_html").notNull(),
+    sentAt: timestamp("sent_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("outbound_replies_message_idx").on(t.inboxMessageId),
+    index("outbound_replies_provider_idx").on(t.sendingProviderId),
+  ]
+);
+
+export const providerHealthLogs = pgTable(
+  "provider_health_logs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    providerId: uuid("provider_id").notNull(),
+    providerType: text("provider_type").$type<"sending" | "inbox" | "tracking">().notNull(),
+    status: healthStatus("status").notNull(),
+    errorDetails: text("error_details"),
+    checkedAt: timestamp("checked_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("provider_health_logs_project_idx").on(t.projectId),
+    index("provider_health_logs_provider_idx").on(t.providerId),
+  ]
 );

@@ -1,7 +1,9 @@
 import { writeAudit } from "@/lib/audit";
 import { getBoss } from "@/lib/queue";
 import { QUEUES, type SendCampaignJob } from "@/lib/queue/jobs";
+import { AppError } from "@/lib/errors";
 import * as repo from "./campaign.repository";
+import { getAccessibleProject } from "@/core/projects/project.service";
 import type { CampaignRow, PagedCampaigns } from "./campaign.repository";
 import type {
   CreateCampaignInput,
@@ -12,9 +14,13 @@ import type {
 
 export type CampaignErrorCode = "not_found" | "invalid_state" | "validation";
 
-export class CampaignError extends Error {
-  constructor(message: string, public readonly code: CampaignErrorCode = "invalid_state") {
-    super(message);
+export class CampaignError extends AppError {
+  constructor(
+    message: string, 
+    code: CampaignErrorCode = "invalid_state",
+    statusCode: number = 400,
+  ) {
+    super(message, code, statusCode);
     this.name = "CampaignError";
   }
 }
@@ -24,11 +30,15 @@ export interface Actor {
   ipAddress?: string | null;
 }
 
-export function listCampaigns(projectId: string, query: ListCampaignsQuery): Promise<PagedCampaigns> {
+export async function listCampaigns(projectId: string, query: ListCampaignsQuery, userId: string): Promise<PagedCampaigns> {
+  const accessible = await getAccessibleProject(projectId, userId);
+  if (!accessible) throw new CampaignError("Campaign not found", "not_found");
   return repo.list(projectId, query);
 }
 
-export function getCampaign(projectId: string, id: string): Promise<CampaignRow | null> {
+export async function getCampaign(projectId: string, id: string, userId: string): Promise<CampaignRow | null> {
+  const accessible = await getAccessibleProject(projectId, userId);
+  if (!accessible) return null;
   return repo.findById(projectId, id);
 }
 
@@ -37,7 +47,10 @@ export async function createCampaign(
   input: CreateCampaignInput,
   actor: Actor,
 ): Promise<CampaignRow> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new CampaignError("Campaign not found", "not_found");
   const row = await repo.create(projectId, input);
+
   await writeAudit({
     actorUserId: actor.userId,
     projectId,
@@ -55,7 +68,10 @@ export async function updateCampaign(
   input: UpdateCampaignInput,
   actor: Actor,
 ): Promise<CampaignRow> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new CampaignError("Campaign not found", "not_found");
   const existing = await repo.findById(projectId, id);
+
   if (!existing) throw new CampaignError("Campaign not found", "not_found");
   if (existing.status !== "draft") {
     throw new CampaignError("Only draft campaigns can be edited", "invalid_state");
@@ -74,7 +90,10 @@ export async function updateCampaign(
 }
 
 export async function approveCampaign(projectId: string, id: string, actor: Actor): Promise<CampaignRow> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new CampaignError("Campaign not found", "not_found");
   const existing = await repo.findById(projectId, id);
+
   if (!existing) throw new CampaignError("Campaign not found", "not_found");
   if (existing.status !== "draft") {
     throw new CampaignError("Only draft campaigns can be approved", "invalid_state");
@@ -109,14 +128,17 @@ export async function sendCampaign(
   input: SendCampaignInput,
   actor: Actor,
 ): Promise<CampaignRow> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new CampaignError("Campaign not found", "not_found");
   const existing = await repo.findById(projectId, id);
+
   if (!existing) throw new CampaignError("Campaign not found", "not_found");
   if (existing.status !== "approved") {
     throw new CampaignError("Approve the campaign before sending", "invalid_state");
   }
   if (!existing.listId) throw new CampaignError("Select a distributor list first", "validation");
-  if (!existing.sendingDomainId && !existing.mailboxId) {
-    throw new CampaignError("Select a sending domain or mailbox connection first", "validation");
+  if (!existing.sendingDomainId && !existing.mailboxId && !existing.communicationProfileId) {
+    throw new CampaignError("Select a sending domain, mailbox connection, or communication profile first", "validation");
   }
 
   const scheduledAt = input.scheduledAt ? new Date(input.scheduledAt) : null;
@@ -152,7 +174,10 @@ export async function sendCampaign(
 
 /** Revert a scheduled campaign to draft so the pending job becomes a no-op. */
 export async function cancelSchedule(projectId: string, id: string, actor: Actor): Promise<CampaignRow> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new CampaignError("Campaign not found", "not_found");
   const existing = await repo.findById(projectId, id);
+
   if (!existing) throw new CampaignError("Campaign not found", "not_found");
   if (existing.status !== "scheduled") {
     throw new CampaignError("Only scheduled campaigns can be cancelled", "invalid_state");
@@ -175,6 +200,8 @@ export async function cancelSchedule(projectId: string, id: string, actor: Actor
 }
 
 export async function deleteCampaign(projectId: string, id: string, actor: Actor): Promise<void> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new CampaignError("Campaign not found", "not_found");
   await repo.softDelete(projectId, id);
   await writeAudit({
     actorUserId: actor.userId,
@@ -187,7 +214,10 @@ export async function deleteCampaign(projectId: string, id: string, actor: Actor
 }
 
 export async function restoreCampaign(projectId: string, id: string, actor: Actor): Promise<void> {
+  const accessible = await getAccessibleProject(projectId, actor.userId);
+  if (!accessible) throw new CampaignError("Campaign not found", "not_found");
   await repo.restore(projectId, id);
+
   await writeAudit({
     actorUserId: actor.userId,
     projectId,

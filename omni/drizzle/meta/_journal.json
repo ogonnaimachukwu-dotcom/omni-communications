@@ -22,6 +22,27 @@
       "when": 1782344451257,
       "tag": "0002_sweet_blue_blade",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1782504095166,
+      "tag": "0003_stiff_manta",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1782558096544,
+      "tag": "0004_jazzy_daimon_hellstrom",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1782686294812,
+      "tag": "0005_productive_baron_strucker",
+      "breakpoints": true
     }
   ]
 }

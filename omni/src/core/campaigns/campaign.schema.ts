@@ -16,6 +16,7 @@ export const createCampaignSchema = z.object({
   listId: optionalUuid,
   sendingDomainId: optionalUuid,
   mailboxId: optionalUuid,
+  communicationProfileId: optionalUuid,
   signatureId: optionalUuid,
 });
 export type CreateCampaignInput = z.infer<typeof createCampaignSchema>;
@@ -29,7 +30,7 @@ export type CampaignView = z.infer<typeof campaignViewEnum>;
 export const listCampaignsQuerySchema = z.object({
   q: z.string().trim().max(120).optional().transform((v) => (v && v.length > 0 ? v : undefined)),
   status: z
-    .enum(["draft", "approved", "scheduled", "sending", "sent", "failed"])
+    .enum(["draft", "approved", "scheduled", "sending", "sent", "failed", "paused"])
     .optional()
     .catch(undefined),
   view: campaignViewEnum.default("active").catch("active" as const),

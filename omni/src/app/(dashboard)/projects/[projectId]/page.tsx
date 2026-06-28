@@ -1,9 +1,11 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
 import { ArrowLeft, Settings2, Users, Send, BarChart3, Mail } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { idSchema } from "@/core/projects/project.schema";
-import { getProject, getProjectStats } from "@/core/projects/project.service";
+import { requireProject, getAccessibleProjectStats } from "@/core/projects/project.service";
 import { cn } from "@/lib/utils";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { StatusBadge } from "../_components/status-badge";
@@ -19,10 +21,18 @@ export default async function ProjectDetailPage({
   const id = idSchema.safeParse(projectId);
   if (!id.success) notFound();
 
-  const project = await getProject(id.data);
-  if (!project) notFound();
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) redirect("/login");
 
-  const stats = await getProjectStats(project.id);
+  let project;
+  try {
+    project = await requireProject(id.data, session.user.id);
+  } catch {
+    notFound();
+  }
+
+  const stats = await getAccessibleProjectStats(project.id, session.user.id);
+
 
   return (
     <div className="space-y-8">
@@ -61,11 +71,11 @@ export default async function ProjectDetailPage({
             Campaigns
           </Link>
           <Link
-            href={`/projects/${project.id}/mailboxes`}
+            href={`/projects/${project.id}/communication`}
             className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
           >
             <Mail className="size-4" />
-            Mailboxes
+            Communication
           </Link>
           <Link
             href={`/projects/${project.id}/analytics`}

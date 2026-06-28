@@ -1,9 +1,9 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, count } from "drizzle-orm";
 import { db } from "@/db";
 import { env } from "@/env";
-import { campaigns } from "@/db/schema";
+import { campaigns, projectMembers, campaignRecipients } from "@/db/schema";
 import { writeAudit } from "@/lib/audit";
-import { getTransport } from "@/lib/email";
+import { getCampaignTransport } from "@/core/communication/communication.service";
 import { getBoss } from "@/lib/queue";
 import { QUEUES, type SendCampaignJob, type SendCampaignRecipientJob } from "@/lib/queue/jobs";
 import * as campaignRepo from "./campaign.repository";
@@ -20,17 +20,22 @@ function unsubscribeUrl(token: string): string {
 }
 
 /**
- * Fan-out: freeze the audience into the ledger and enqueue one job per queued
- * recipient. Idempotent — the unique(campaign_id,email) index and per-recipient
- * singletonKey make re-runs safe.
+ * Fan-out: resolve+freeze the audience and enqueue jobs in pages of e.g. 1000.
+ * Idempotent, memory-efficient, and crash-resilient via keyset pagination cursor.
  */
 export async function runCampaignFanout(job: SendCampaignJob): Promise<void> {
   const { campaignId, projectId } = job;
   const campaign = await campaignRepo.findById(projectId, campaignId, { includeDeleted: true });
   if (!campaign) return;
 
-  // Only proceed from a pre-send state; guards against cancellation/edits.
-  if (campaign.status !== "approved" && campaign.status !== "scheduled") return;
+  // Only proceed from a pre-send / sending state; guards against invalid status
+  if (
+    campaign.status !== "approved" &&
+    campaign.status !== "scheduled" &&
+    campaign.status !== "sending"
+  ) {
+    return;
+  }
   if (campaign.deletedAt) return;
 
   if (!campaign.listId) {
@@ -46,47 +51,111 @@ export async function runCampaignFanout(job: SendCampaignJob): Promise<void> {
     return;
   }
 
-  await campaignRepo.setStatus(projectId, campaignId, { status: "sending" });
+  // Configurable batch size
+  const LIMIT = Number(process.env.CAMPAIGN_BATCH_SIZE) || 1000;
 
-  const [audience, suppressed] = await Promise.all([
-    recipientRepo.resolveAudience(projectId, campaign.listId, {
-      tagId: job.tagId,
-      subscription: job.subscription,
-    }),
-    suppressions.suppressedEmails(projectId),
-  ]);
+  // Keyset cursor resolution
+  const lastId = await recipientRepo.getLastEnqueuedDistributorId(campaignId);
 
-  const result = await db.transaction((tx) =>
-    recipientRepo.freezeRecipients(campaignId, projectId, audience, suppressed, tx),
-  );
-
-  await campaignRepo.setStatus(projectId, campaignId, {
-    totalRecipients: result.queued + result.suppressed,
+  // Fetch the next page of audience members
+  const batch = await recipientRepo.resolveAudiencePage(projectId, campaign.listId, {
+    tagId: job.tagId,
+    subscription: job.subscription,
+    afterId: lastId,
+    limit: LIMIT,
   });
 
-  const ids = await recipientRepo.queuedRecipientIds(campaignId);
-
-  if (ids.length === 0) {
-    await markCampaignSent(projectId, campaignId);
-  } else {
-    const boss = await getBoss();
-    for (const recipientId of ids) {
-      await boss.send(
-        QUEUES.SEND_CAMPAIGN_RECIPIENT,
-        { recipientId, campaignId, projectId } satisfies SendCampaignRecipientJob,
-        { singletonKey: recipientId, ...RECIPIENT_RETRY },
-      );
+  if (batch.length === 0) {
+    // Transition status to sending if it was not already
+    if (campaign.status === "approved" || campaign.status === "scheduled") {
+      await campaignRepo.setStatus(projectId, campaignId, { status: "sending" });
     }
+    // Check if campaign is completely sent
+    await maybeComplete(projectId, campaignId);
+    return;
   }
 
-  await writeAudit({
-    actorUserId: null,
-    projectId,
-    action: "campaign.send_started",
-    entityType: "campaign",
-    entityId: campaignId,
-    metadata: { queued: result.queued, suppressed: result.suppressed },
-  });
+  // Double check campaign wasn't paused or deleted during processing
+  const currentCampaign = await campaignRepo.findById(projectId, campaignId, { includeDeleted: true });
+  if (
+    !currentCampaign ||
+    currentCampaign.status === "paused" ||
+    currentCampaign.status === "failed" ||
+    currentCampaign.deletedAt
+  ) {
+    return;
+  }
+
+  // Set status to sending if it's the first run
+  if (campaign.status === "approved" || campaign.status === "scheduled") {
+    await campaignRepo.setStatus(projectId, campaignId, { status: "sending" });
+  }
+
+  // Fetch suppressions only for the email addresses in the current batch
+  const batchEmails = batch.map((d) => d.email);
+  const suppressed = await suppressions.suppressedEmailsInBatch(projectId, batchEmails);
+
+  // Freeze this batch of recipients
+  const result = await db.transaction((tx) =>
+    recipientRepo.freezeRecipients(campaignId, projectId, batch, suppressed, tx),
+  );
+
+  // Update totalRecipients to match rows currently stored
+  const [countRow] = await db
+    .select({ value: count() })
+    .from(campaignRecipients)
+    .where(eq(campaignRecipients.campaignId, campaignId));
+  const totalRecipients = countRow?.value || 0;
+  await campaignRepo.setStatus(projectId, campaignId, { totalRecipients });
+
+  // Get recipient row IDs that were queued in this specific batch
+  const distributorIds = batch.map((d) => d.distributorId);
+  const queuedRecipients = await db
+    .select({ id: campaignRecipients.id })
+    .from(campaignRecipients)
+    .where(
+      and(
+        eq(campaignRecipients.campaignId, campaignId),
+        eq(campaignRecipients.status, "queued"),
+        inArray(campaignRecipients.distributorId, distributorIds),
+      ),
+    );
+  const ids = queuedRecipients.map((r) => r.id);
+
+  const boss = await getBoss();
+
+  // Enqueue sending jobs in pg-boss
+  for (const recipientId of ids) {
+    await boss.send(
+      QUEUES.SEND_CAMPAIGN_RECIPIENT,
+      { recipientId, campaignId, projectId } satisfies SendCampaignRecipientJob,
+      { singletonKey: recipientId, ...RECIPIENT_RETRY },
+    );
+  }
+
+  // Re-enqueue the next page enqueuing run if we hit the batch limit
+  if (batch.length === LIMIT) {
+    await boss.send(QUEUES.SEND_CAMPAIGN, job, { singletonKey: campaignId });
+
+    await writeAudit({
+      actorUserId: null,
+      projectId,
+      action: "campaign.enqueue_batch_completed",
+      entityType: "campaign",
+      entityId: campaignId,
+      metadata: { enqueued: result.queued, suppressed: result.suppressed, cursor: lastId },
+    });
+  } else {
+    // Completed send pipeline requests
+    await writeAudit({
+      actorUserId: null,
+      projectId,
+      action: "campaign.send_started",
+      entityType: "campaign",
+      entityId: campaignId,
+      metadata: { totalEnqueued: totalRecipients },
+    });
+  }
 }
 
 /**
@@ -136,7 +205,15 @@ export async function sendRecipient(job: SendCampaignRecipientJob): Promise<void
       await maybeComplete(recipient.projectId, campaign.id);
       return;
     }
-    const project = await projectRepo.findById(recipient.projectId);
+    const member = await db
+      .select({ userId: projectMembers.userId })
+      .from(projectMembers)
+      .where(eq(projectMembers.projectId, recipient.projectId))
+      .limit(1)
+      .then((rows) => rows[0]);
+    const project = member
+      ? await projectRepo.findAccessibleProject(recipient.projectId, member.userId)
+      : null;
     const fromName = project?.ceoName || project?.name || "";
     fromString = fromName ? `${fromName} <${mailbox.email}>` : mailbox.email;
   } else {
@@ -159,7 +236,7 @@ export async function sendRecipient(job: SendCampaignRecipientJob): Promise<void
   });
 
   try {
-    const transport = await getTransport(campaign.mailboxId);
+    const transport = await getCampaignTransport(campaign);
     const { providerMessageId } = await transport.send({
       from: fromString,
       to: recipient.email,

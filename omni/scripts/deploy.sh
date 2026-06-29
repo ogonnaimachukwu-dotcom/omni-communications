@@ -31,7 +31,7 @@ fi
 # 3. Pull latest code (if in git environment)
 if [ -d .git ]; then
   echo "--> Fetching latest git code..."
-  git pull origin main || echo "Warning: Git sync skipped."
+  git pull || echo "Warning: Git sync skipped."
 fi
 
 # 4. Build and boot services

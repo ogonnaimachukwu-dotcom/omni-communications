@@ -235,8 +235,9 @@ export async function sendRecipient(job: SendCampaignRecipientJob): Promise<void
     unsubscribeUrl: url,
   });
 
+  let transport: any;
   try {
-    const transport = await getCampaignTransport(campaign);
+    transport = await getCampaignTransport(campaign);
     const { providerMessageId } = await transport.send({
       from: fromString,
       to: recipient.email,
@@ -248,6 +249,7 @@ export async function sendRecipient(job: SendCampaignRecipientJob): Promise<void
     await recipientRepo.markRecipient(recipient.id, {
       status: "sent",
       providerMessageId,
+      sendingProviderId: transport.providerId ?? null,
       sentAt: new Date(),
     });
     await campaignRepo.bumpCounters(campaign.id, { sentCount: 1 });
@@ -266,11 +268,13 @@ export async function sendRecipient(job: SendCampaignRecipientJob): Promise<void
 
     await recipientRepo.markRecipient(recipient.id, {
       status: "failed",
+      sendingProviderId: transport?.providerId ?? null,
       error: errorMsg.slice(0, 500),
       failedAt: new Date(),
     });
     await campaignRepo.bumpCounters(campaign.id, { failedCount: 1 });
   }
+
 
   await maybeComplete(recipient.projectId, campaign.id);
 }

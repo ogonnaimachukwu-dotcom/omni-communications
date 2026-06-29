@@ -42,6 +42,7 @@ export default async function ProjectCommunicationPage({
     name: s.name,
     type: s.type,
     status: s.status,
+    isDefault: s.isDefault,
   }));
 
   const inboxes = inboxList.map(i => ({

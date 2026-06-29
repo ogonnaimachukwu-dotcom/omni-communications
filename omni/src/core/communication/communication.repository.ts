@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql, count } from "drizzle-orm";
 import { db } from "@/db";
 import {
   sendingProviders,
@@ -9,6 +9,7 @@ import {
   outboundReplies,
   providerHealthLogs,
   projectMembers,
+  campaignRecipients,
 } from "@/db/schema";
 import type {
   CreateSendingProviderInput,
@@ -32,6 +33,7 @@ export async function listSendingProvidersByProject(projectId: string, userId: s
       type: sendingProviders.type,
       status: sendingProviders.status,
       credentials: sendingProviders.credentials,
+      isDefault: sendingProviders.isDefault,
       createdAt: sendingProviders.createdAt,
       updatedAt: sendingProviders.updatedAt,
     })
@@ -232,4 +234,72 @@ export async function logHealth(input: typeof providerHealthLogs.$inferInsert) {
 
 export async function listHealthLogsByProject(projectId: string) {
   return db.select().from(providerHealthLogs).where(eq(providerHealthLogs.projectId, projectId));
+}
+
+export async function findDefaultSendingProvider(projectId: string) {
+  const [row] = await db
+    .select()
+    .from(sendingProviders)
+    .where(and(eq(sendingProviders.projectId, projectId), eq(sendingProviders.isDefault, true)))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function clearDefaultSendingProvider(projectId: string) {
+  await db
+    .update(sendingProviders)
+    .set({ isDefault: false, updatedAt: new Date() })
+    .where(eq(sendingProviders.projectId, projectId));
+}
+
+export async function setDefaultSendingProvider(projectId: string, id: string) {
+  await clearDefaultSendingProvider(projectId);
+  await db
+    .update(sendingProviders)
+    .set({ isDefault: true, updatedAt: new Date() })
+    .where(eq(sendingProviders.id, id));
+}
+
+export interface ProviderStats {
+  providerId: string;
+  sent: number;
+  delivered: number;
+  failed: number;
+}
+
+export async function getProviderStatistics(projectId: string): Promise<ProviderStats[]> {
+  const rows = await db
+    .select({
+      providerId: campaignRecipients.sendingProviderId,
+      status: campaignRecipients.status,
+      count: count(),
+    })
+    .from(campaignRecipients)
+    .where(eq(campaignRecipients.projectId, projectId))
+    .groupBy(campaignRecipients.sendingProviderId, campaignRecipients.status);
+
+  // Roll up stats into per-provider maps
+  const statsMap: Record<string, { sent: number; delivered: number; failed: number }> = {};
+
+  for (const r of rows) {
+    if (!r.providerId) continue;
+    if (!statsMap[r.providerId]) {
+      statsMap[r.providerId] = { sent: 0, delivered: 0, failed: 0 };
+    }
+    const val = r.count;
+    if (r.status === "sent") {
+      statsMap[r.providerId].sent += val;
+    } else if (r.status === "delivered") {
+      statsMap[r.providerId].delivered += val;
+    } else if (r.status === "failed") {
+      statsMap[r.providerId].failed += val;
+    }
+  }
+
+  return Object.entries(statsMap).map(([providerId, s]) => ({
+    providerId,
+    sent: s.sent,
+    delivered: s.delivered,
+    failed: s.failed,
+  }));
 }

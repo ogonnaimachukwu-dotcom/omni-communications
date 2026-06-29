@@ -5,6 +5,21 @@ export class OutlookTransport implements EmailTransport {
 
   constructor(private readonly accessToken: string) {}
 
+  async connect(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  async validate(): Promise<boolean> {
+    try {
+      const res = await fetch("https://graph.microsoft.com/v1.0/me", {
+        headers: { Authorization: `Bearer ${this.accessToken}` },
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   async send(email: OutboundEmail): Promise<SendResult> {
     // Generate a unique client-side message ID since Microsoft Graph sendMail does not return the message ID.
     const customMessageId = `outlook-${crypto.randomUUID()}`;
@@ -71,4 +86,15 @@ export class OutlookTransport implements EmailTransport {
 
     return { providerMessageId: customMessageId };
   }
+
+  async health(): Promise<{ status: "healthy" | "unhealthy"; details?: string }> {
+    const ok = await this.validate();
+    if (ok) return { status: "healthy" };
+    return { status: "unhealthy", details: "Outlook API health check failed (unauthorized access token)." };
+  }
+
+  async disconnect(): Promise<void> {
+    return Promise.resolve();
+  }
 }
+

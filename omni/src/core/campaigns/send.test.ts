@@ -125,6 +125,7 @@ describe("sendRecipient", () => {
     expect(recipientRepo.markRecipient).toHaveBeenCalledWith("rec1", {
       status: "sent",
       providerMessageId: "msg123",
+      sendingProviderId: null,
       sentAt: expect.any(Date),
     });
   });

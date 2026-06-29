@@ -79,6 +79,69 @@ export async function testSendingProviderAction(projectId: string, id: string) {
   return success;
 }
 
+export async function updateSendingProviderAction(
+  projectId: string,
+  id: string,
+  name: string,
+  config: Record<string, unknown>
+) {
+  const session = await assertSession();
+  await requireProject(projectId, session.user.id);
+
+  const existing = await repo.findSendingProviderById(id);
+  if (!existing || existing.projectId !== projectId) {
+    throw new Error("Sending provider not found");
+  }
+
+  const sealed = sealToString(JSON.stringify(config));
+  const provider = await repo.updateSendingProvider(id, {
+    name,
+    credentials: sealed,
+  });
+
+  await writeAudit({
+    actorUserId: session.user.id,
+    projectId,
+    action: "sending_provider.updated",
+    entityType: "sending_provider",
+    entityId: id,
+    metadata: { name },
+  });
+
+  revalidatePath(`/projects/${projectId}/communication`);
+  return provider;
+}
+
+export async function setDefaultSendingProviderAction(projectId: string, id: string) {
+  const session = await assertSession();
+  await requireProject(projectId, session.user.id);
+
+  const existing = await repo.findSendingProviderById(id);
+  if (!existing || existing.projectId !== projectId) {
+    throw new Error("Sending provider not found");
+  }
+
+  await repo.setDefaultSendingProvider(projectId, id);
+
+  await writeAudit({
+    actorUserId: session.user.id,
+    projectId,
+    action: "sending_provider.default_set",
+    entityType: "sending_provider",
+    entityId: id,
+    metadata: { name: existing.name },
+  });
+
+  revalidatePath(`/projects/${projectId}/communication`);
+}
+
+export async function getProviderStatisticsAction(projectId: string) {
+  const session = await assertSession();
+  await requireProject(projectId, session.user.id);
+
+  return repo.getProviderStatistics(projectId);
+}
+
 // --- Inbox Connections ---
 export async function createInboxConnectionAction(
   projectId: string,

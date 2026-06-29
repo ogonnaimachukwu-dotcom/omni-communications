@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   createSendingProviderAction,
   removeSendingProviderAction,
@@ -12,9 +12,12 @@ import {
   removeTrackingProviderAction,
   createCommunicationProfileAction,
   removeCommunicationProfileAction,
+  updateSendingProviderAction,
+  setDefaultSendingProviderAction,
+  getProviderStatisticsAction,
 } from "../actions";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { Plus, Trash, Activity, Check, AlertCircle, RefreshCw, Send, Mail, ShieldCheck, Settings } from "lucide-react";
+import { Plus, Trash, Activity, Check, AlertCircle, RefreshCw, Send, Mail, ShieldCheck, Settings, Star, Edit2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface SenderItem {
@@ -22,7 +25,9 @@ interface SenderItem {
   name: string;
   type: string;
   status: string;
+  isDefault: boolean;
 }
+
 
 interface InboxItem {
   id: string;
@@ -72,6 +77,8 @@ export function CommunicationClientView({
   const [profiles, setProfiles] = useState<ProfileItem[]>(initialProfiles);
 
   const [loading, setLoading] = useState<string | null>(null);
+  const [stats, setStats] = useState<any[]>([]);
+  const [editingSenderId, setEditingSenderId] = useState<string | null>(null);
 
   // Form states
   const [senderName, setSenderName] = useState("");
@@ -100,28 +107,85 @@ export function CommunicationClientView({
   const [profileTrackerId, setProfileTrackerId] = useState("");
   const [profileAlias, setProfileAlias] = useState("");
 
+  const fetchStats = async () => {
+    try {
+      const data = await getProviderStatisticsAction(projectId);
+      setStats(data);
+    } catch (err) {
+      console.error("Failed to load statistics", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchStats();
+  }, [projectId]);
+
+  const handleEditSender = (s: SenderItem) => {
+    setEditingSenderId(s.id);
+    setSenderName(s.name);
+    setSenderType(s.type as any);
+    setResendKey("");
+    setSmtpHost("");
+    setSmtpPort("587");
+    setSmtpSecure(false);
+    setSmtpUser("");
+    setSmtpPass("");
+  };
+
+  const handleCancelEdit = () => {
+    setEditingSenderId(null);
+    setSenderName("");
+    setResendKey("");
+    setSmtpHost("");
+    setSmtpUser("");
+    setSmtpPass("");
+  };
+
+  async function handleSetDefaultSender(id: string) {
+    setLoading(`default_${id}`);
+    try {
+      await setDefaultSendingProviderAction(projectId, id);
+      setSenders(senders.map(s => ({
+        ...s,
+        isDefault: s.id === id
+      })));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to set default sender");
+    } finally {
+      setLoading(null);
+    }
+  }
+
   async function handleAddSender(e: React.FormEvent) {
     e.preventDefault();
-    setLoading("add_sender");
+    setLoading(editingSenderId ? "update_sender" : "add_sender");
     try {
       const config =
         senderType === "resend"
           ? { apiKey: resendKey }
           : { host: smtpHost, port: Number(smtpPort), secure: smtpSecure, username: smtpUser, password: smtpPass };
 
-      const newSender = await createSendingProviderAction(projectId, senderName, senderType, config);
-      setSenders([...senders, { id: newSender.id, name: newSender.name, type: newSender.type, status: newSender.status }]);
+      if (editingSenderId) {
+        const updated = await updateSendingProviderAction(projectId, editingSenderId, senderName, config);
+        setSenders(senders.map(s => s.id === editingSenderId ? { ...s, name: updated.name, type: updated.type } : s));
+        setEditingSenderId(null);
+      } else {
+        const newSender = await createSendingProviderAction(projectId, senderName, senderType, config);
+        setSenders([...senders, { id: newSender.id, name: newSender.name, type: newSender.type, status: newSender.status, isDefault: newSender.isDefault }]);
+      }
       setSenderName("");
       setResendKey("");
       setSmtpHost("");
       setSmtpUser("");
       setSmtpPass("");
+      fetchStats();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to add sender");
+      alert(err instanceof Error ? err.message : "Failed to save sender");
     } finally {
       setLoading(null);
     }
   }
+
 
   async function handleRemoveSender(id: string) {
     if (!confirm("Are you sure?")) return;
@@ -321,38 +385,75 @@ export function CommunicationClientView({
               <div className="text-center py-6 text-sm text-muted-foreground">No sending providers configured.</div>
             ) : (
               <div className="space-y-3">
-                {senders.map(s => (
-                  <div key={s.id} className="flex items-center justify-between p-3 border border-border rounded-lg bg-background">
-                    <div className="flex items-center gap-2.5">
-                      <div
-                        className={cn(
-                          "size-2 rounded-full",
-                          s.status === "active" ? "bg-emerald-500" : "bg-rose-500"
-                        )}
-                      />
-                      <div>
-                        <div className="font-semibold text-sm">{s.name}</div>
-                        <div className="text-xs text-muted-foreground uppercase">{s.type}</div>
+                {senders.map(s => {
+                  const pStats = stats.find(st => st.providerId === s.id);
+                  return (
+                    <div key={s.id} className="flex flex-col gap-2 p-3 border border-border rounded-lg bg-background">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div
+                            className={cn(
+                              "size-2 rounded-full",
+                              s.status === "active" ? "bg-emerald-500" : "bg-rose-500"
+                            )}
+                          />
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-sm">{s.name}</span>
+                              {s.isDefault && (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-bold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 rounded-full">
+                                  <Star className="size-2.5 fill-indigo-400" /> Default
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-muted-foreground uppercase">{s.type}</div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          {!s.isDefault && s.status === "active" && (
+                            <button
+                              onClick={() => handleSetDefaultSender(s.id)}
+                              disabled={loading === `default_${s.id}`}
+                              className="p-1.5 text-muted-foreground hover:text-indigo-400 rounded hover:bg-muted transition-colors"
+                              title="Set as Default"
+                            >
+                              <Star className="size-4" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleEditSender(s)}
+                            className="p-1.5 text-muted-foreground hover:text-foreground rounded hover:bg-muted transition-colors"
+                            title="Edit Configuration"
+                          >
+                            <Edit2 className="size-4" />
+                          </button>
+                          <button
+                            onClick={() => handleTestSender(s.id)}
+                            disabled={loading === s.id}
+                            className="p-1.5 text-muted-foreground hover:text-foreground rounded hover:bg-muted transition-colors flex items-center gap-1 text-xs"
+                          >
+                            <Activity className="size-3.5" />
+                            Verify
+                          </button>
+                          <button
+                            onClick={() => handleRemoveSender(s.id)}
+                            className="p-1.5 text-muted-foreground hover:text-destructive rounded hover:bg-muted transition-colors"
+                          >
+                            <Trash className="size-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Provider Statistics */}
+                      <div className="mt-1 flex gap-4 text-[11px] text-muted-foreground border-t border-border/50 pt-2">
+                        <span>Sent: <strong className="text-foreground">{pStats?.sent ?? 0}</strong></span>
+                        <span>Delivered: <strong className="text-emerald-400">{pStats?.delivered ?? 0}</strong></span>
+                        <span>Failed: <strong className="text-rose-400">{pStats?.failed ?? 0}</strong></span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleTestSender(s.id)}
-                        disabled={loading === s.id}
-                        className="p-1.5 text-muted-foreground hover:text-foreground rounded hover:bg-muted transition-colors flex items-center gap-1 text-xs"
-                      >
-                        <Activity className="size-3.5" />
-                        Verify
-                      </button>
-                      <button
-                        onClick={() => handleRemoveSender(s.id)}
-                        className="p-1.5 text-muted-foreground hover:text-destructive rounded hover:bg-muted transition-colors"
-                      >
-                        <Trash className="size-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>
@@ -490,7 +591,7 @@ export function CommunicationClientView({
         {/* Configure Sending */}
         <Card className="border-border bg-card">
           <CardHeader>
-            <CardTitle className="text-sm">Add Sending Provider</CardTitle>
+            <CardTitle className="text-sm">{editingSenderId ? "Edit Sending Provider" : "Add Sending Provider"}</CardTitle>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleAddSender} className="space-y-3">
@@ -523,10 +624,10 @@ export function CommunicationClientView({
                   <label className="text-xs font-semibold text-muted-foreground">Resend API Key</label>
                   <input
                     type="password"
-                    required
+                    required={!editingSenderId}
                     value={resendKey}
                     onChange={e => setResendKey(e.target.value)}
-                    placeholder="re_..."
+                    placeholder={editingSenderId ? "•••••••••••• (leave blank to keep current)" : "re_..."}
                     className="w-full mt-1 px-3 py-1.5 border border-border rounded bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
                 </div>
@@ -578,9 +679,10 @@ export function CommunicationClientView({
                     <label className="text-xs font-semibold text-muted-foreground">Password</label>
                     <input
                       type="password"
-                      required
+                      required={!editingSenderId}
                       value={smtpPass}
                       onChange={e => setSmtpPass(e.target.value)}
+                      placeholder={editingSenderId ? "•••••••••••• (leave blank to keep current)" : ""}
                       className="w-full mt-1 px-3 py-1.5 border border-border rounded bg-background text-sm text-foreground focus:outline-none"
                     />
                   </div>
@@ -589,12 +691,31 @@ export function CommunicationClientView({
 
               <button
                 type="submit"
-                disabled={loading === "add_sender"}
+                disabled={loading === "add_sender" || loading === "update_sender"}
                 className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm font-semibold transition-colors flex items-center justify-center gap-1.5"
               >
-                <Plus className="size-4" />
-                Add Sender
+                {editingSenderId ? (
+                  <>
+                    <Check className="size-4" />
+                    Save Changes
+                  </>
+                ) : (
+                  <>
+                    <Plus className="size-4" />
+                    Add Sender
+                  </>
+                )}
               </button>
+
+              {editingSenderId && (
+                <button
+                  type="button"
+                  onClick={handleCancelEdit}
+                  className="w-full py-1.5 bg-muted hover:bg-muted/80 text-foreground rounded text-sm font-semibold transition-colors mt-2"
+                >
+                  Cancel Edit
+                </button>
+              )}
             </form>
           </CardContent>
         </Card>

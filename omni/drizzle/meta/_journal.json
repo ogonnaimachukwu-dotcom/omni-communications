@@ -43,6 +43,13 @@
       "when": 1782686294812,
       "tag": "0005_productive_baron_strucker",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1782694281706,
+      "tag": "0006_next_raza",
+      "breakpoints": true
     }
   ]
 }

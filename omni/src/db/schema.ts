@@ -500,7 +500,11 @@ export const campaignRecipients = pgTable(
     email: text("email").notNull(),
     status: recipientStatus("status").notNull().default("queued"),
     providerMessageId: text("provider_message_id"), // Resend message id
+    sendingProviderId: uuid("sending_provider_id").references(() => sendingProviders.id, {
+      onDelete: "set null",
+    }),
     error: text("error"),
+
     sentAt: timestamp("sent_at"),
     deliveredAt: timestamp("delivered_at"),
     failedAt: timestamp("failed_at"),
@@ -591,7 +595,9 @@ export const sendingProviders = pgTable(
     type: sendingProviderType("type").notNull(),
     status: sendingProviderStatus("status").notNull().default("active"),
     credentials: text("credentials").notNull(), // SealedSecret stringified config JSON
+    isDefault: boolean("is_default").notNull().default(false),
     createdAt: timestamp("created_at").notNull().defaultNow(),
+
     updatedAt: timestamp("updated_at")
       .notNull()
       .defaultNow()

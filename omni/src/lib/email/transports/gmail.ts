@@ -5,6 +5,21 @@ export class GmailTransport implements EmailTransport {
 
   constructor(private readonly accessToken: string) {}
 
+  async connect(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  async validate(): Promise<boolean> {
+    try {
+      const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+        headers: { Authorization: `Bearer ${this.accessToken}` },
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   async send(email: OutboundEmail): Promise<SendResult> {
     const mime = this.buildMimeMessage(email);
     const raw = Buffer.from(mime).toString("base64url");
@@ -30,7 +45,18 @@ export class GmailTransport implements EmailTransport {
     return { providerMessageId: data.id };
   }
 
+  async health(): Promise<{ status: "healthy" | "unhealthy"; details?: string }> {
+    const ok = await this.validate();
+    if (ok) return { status: "healthy" };
+    return { status: "unhealthy", details: "Gmail API health check failed (unauthorized access token)." };
+  }
+
+  async disconnect(): Promise<void> {
+    return Promise.resolve();
+  }
+
   private buildMimeMessage(email: OutboundEmail): string {
+
     const boundary = `__omni_boundary_${Date.now()}__`;
     const headers = [
       `From: ${email.from}`,

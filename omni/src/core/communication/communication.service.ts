@@ -24,10 +24,11 @@ export async function getSendingAdapter(providerId: string): Promise<EmailTransp
 
   const credentials = JSON.parse(openFromString(provider.credentials));
 
+  let transport: EmailTransport;
   if (provider.type === "resend") {
-    return new ResendTransport(credentials.apiKey || env.RESEND_API_KEY);
+    transport = new ResendTransport(credentials.apiKey || env.RESEND_API_KEY);
   } else if (provider.type === "smtp") {
-    return new SMTPTransport({
+    transport = new SMTPTransport({
       host: credentials.host,
       port: Number(credentials.port),
       secure: credentials.secure === true || credentials.secure === "true",
@@ -39,6 +40,15 @@ export async function getSendingAdapter(providerId: string): Promise<EmailTransp
   } else {
     throw new Error(`Sending provider type not supported yet: ${provider.type}`);
   }
+
+  Object.defineProperty(transport, "providerId", {
+    value: providerId,
+    writable: false,
+    enumerable: true,
+    configurable: true,
+  });
+
+  return transport;
 }
 
 /**
@@ -133,38 +143,12 @@ export async function testSendingProviderConnection(providerId: string): Promise
     const provider = await repo.findSendingProviderById(providerId);
     if (!provider) return false;
 
-    let success = false;
-    const credentials = JSON.parse(openFromString(provider.credentials));
+    const adapter = await getSendingAdapter(providerId);
+    await adapter.connect();
+    const health = await adapter.health();
+    await adapter.disconnect();
 
-    if (provider.type === "resend") {
-      const res = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${credentials.apiKey || env.RESEND_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from: "test@resend.dev",
-          to: "test@resend.dev",
-          subject: "ping",
-          html: "ping",
-        }),
-      });
-      // A 403/401 is unauthorized, but 400 or other codes can mean the endpoint was reached
-      success = res.status !== 401 && res.status !== 403;
-    } else if (provider.type === "smtp") {
-      const smtp = new SMTPTransport({
-        host: credentials.host,
-        port: Number(credentials.port),
-        secure: credentials.secure === true || credentials.secure === "true",
-        auth: {
-          user: credentials.username,
-          pass: credentials.password,
-        },
-      });
-      success = await smtp.testConnection();
-    }
-
+    const success = health.status === "healthy";
     const nextStatus = success ? "active" : "invalid";
     await repo.updateSendingProvider(providerId, { status: nextStatus });
     await repo.logHealth({
@@ -172,16 +156,29 @@ export async function testSendingProviderConnection(providerId: string): Promise
       providerId,
       providerType: "sending",
       status: success ? "healthy" : "unhealthy",
-      errorDetails: success ? null : "Connection validation test failed",
+      errorDetails: success ? null : (health.details || "Connection validation test failed"),
     });
 
     return success;
   } catch (err) {
     const errorDetails = err instanceof Error ? err.message : "unknown_error";
     await repo.updateSendingProvider(providerId, { status: "invalid" });
+    try {
+      const provider = await repo.findSendingProviderById(providerId);
+      if (provider) {
+        await repo.logHealth({
+          projectId: provider.projectId,
+          providerId,
+          providerType: "sending",
+          status: "unhealthy",
+          errorDetails: errorDetails,
+        });
+      }
+    } catch {}
     return false;
   }
 }
+
 
 /**
   * Health check test for an Inbox Connection.
@@ -234,6 +231,15 @@ export class LegacyMailboxTransport implements EmailTransport {
 
   constructor(private readonly mailboxId: string) {}
 
+  async connect(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  async validate(): Promise<boolean> {
+    const mailbox = await mailboxRepo.findById(this.mailboxId);
+    return !!mailbox && mailbox.status === "active";
+  }
+
   async send(email: {
     from: string;
     to: string;
@@ -261,11 +267,23 @@ export class LegacyMailboxTransport implements EmailTransport {
       return outlook.send(email);
     }
   }
+
+  async health(): Promise<{ status: "healthy" | "unhealthy"; details?: string }> {
+    const ok = await this.validate();
+    if (ok) return { status: "healthy" };
+    return { status: "unhealthy", details: "Legacy mailbox is missing or not active" };
+  }
+
+  async disconnect(): Promise<void> {
+    return Promise.resolve();
+  }
 }
+
 
 export async function getCampaignTransport(campaign: {
   communicationProfileId?: string | null;
   mailboxId?: string | null;
+  projectId?: string | null;
 }): Promise<EmailTransport> {
   if (campaign.communicationProfileId) {
     return getProfileTransport(campaign.communicationProfileId);
@@ -273,6 +291,12 @@ export async function getCampaignTransport(campaign: {
   if (campaign.mailboxId) {
     const { getTransport } = await import("@/lib/email");
     return getTransport(campaign.mailboxId);
+  }
+  if (campaign.projectId) {
+    const defaultProvider = await repo.findDefaultSendingProvider(campaign.projectId);
+    if (defaultProvider) {
+      return getSendingAdapter(defaultProvider.id);
+    }
   }
   return new ResendTransport();
 }

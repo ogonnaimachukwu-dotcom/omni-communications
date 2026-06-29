@@ -1,0 +1,3 @@
+ALTER TABLE "campaign_recipients" ADD COLUMN "sending_provider_id" uuid;--> statement-breakpoint
+ALTER TABLE "sending_providers" ADD COLUMN "is_default" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "campaign_recipients" ADD CONSTRAINT "campaign_recipients_sending_provider_id_sending_providers_id_fk" FOREIGN KEY ("sending_provider_id") REFERENCES "public"."sending_providers"("id") ON DELETE set null ON UPDATE no action;

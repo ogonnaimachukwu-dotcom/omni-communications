@@ -25,6 +25,20 @@ export class SMTPTransport implements EmailTransport {
     });
   }
 
+  async connect(): Promise<void> {
+    // Nodemailer verifies connections lazily, but verify on connect to ensure it works
+    await this.transporter.verify();
+  }
+
+  async validate(): Promise<boolean> {
+    try {
+      await this.transporter.verify();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async send(email: OutboundEmail): Promise<SendResult> {
     const info = await this.transporter.sendMail({
       from: email.from,
@@ -38,12 +52,18 @@ export class SMTPTransport implements EmailTransport {
     return { providerMessageId: info.messageId };
   }
 
-  async testConnection(): Promise<boolean> {
+  async health(): Promise<{ status: "healthy" | "unhealthy"; details?: string }> {
     try {
       await this.transporter.verify();
-      return true;
-    } catch {
-      return false;
+      return { status: "healthy" };
+    } catch (err) {
+      return { status: "unhealthy", details: err instanceof Error ? err.message : String(err) };
     }
   }
+
+  async disconnect(): Promise<void> {
+    this.transporter.close();
+    return Promise.resolve();
+  }
 }
+

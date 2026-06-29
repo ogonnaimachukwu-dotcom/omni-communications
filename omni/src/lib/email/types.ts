@@ -19,5 +19,12 @@ export interface SendResult {
 
 export interface EmailTransport {
   readonly name: string;
+  readonly providerId?: string;
+  connect(): Promise<void>;
+
+  validate(): Promise<boolean>;
   send(email: OutboundEmail): Promise<SendResult>;
+  health(): Promise<{ status: "healthy" | "unhealthy"; details?: string }>;
+  disconnect(): Promise<void>;
 }
+

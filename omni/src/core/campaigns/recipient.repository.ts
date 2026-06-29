@@ -282,7 +282,7 @@ export async function getSendContext(
 
 export async function markRecipient(
   id: string,
-  patch: Partial<Pick<RecipientRow, "status" | "providerMessageId" | "error" | "sentAt" | "deliveredAt" | "failedAt">>,
+  patch: Partial<Pick<RecipientRow, "status" | "providerMessageId" | "sendingProviderId" | "error" | "sentAt" | "deliveredAt" | "failedAt">>,
   conn: DB = defaultDb,
 ): Promise<void> {
   await conn.update(campaignRecipients).set(patch).where(eq(campaignRecipients.id, id));

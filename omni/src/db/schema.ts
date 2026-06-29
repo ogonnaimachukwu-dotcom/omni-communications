@@ -80,7 +80,7 @@ export const sendingProviderType = pgEnum("sending_provider_type", ["resend", "s
 export const sendingProviderStatus = pgEnum("sending_provider_status", ["active", "invalid", "disabled"]);
 export const inboxConnectionType = pgEnum("inbox_connection_type", ["imap", "oauth_gmail", "oauth_outlook"]);
 export const inboxConnectionStatus = pgEnum("inbox_connection_status", ["active", "invalid", "disabled"]);
-export const trackingProviderType = pgEnum("tracking_provider_type", ["resend_webhook", "postmark_webhook", "ses_sns"]);
+export const trackingProviderType = pgEnum("tracking_provider_type", ["resend_webhook", "postmark_webhook", "ses_sns", "mailgun_webhook"]);
 export const trackingProviderStatus = pgEnum("tracking_provider_status", ["active", "disabled"]);
 export const healthStatus = pgEnum("health_status", ["healthy", "warning", "unhealthy"]);
 export const messageSentiment = pgEnum("message_sentiment", ["positive", "neutral", "negative", "bounce"]);
@@ -115,6 +115,8 @@ export const emailEventType = pgEnum("email_event_type", [
   "complained",
   "opened",
   "clicked",
+  "failed",
+  "unsubscribed",
 ]);
 
 /* =========================================================================
@@ -551,6 +553,15 @@ export const emailEvents = pgTable(
     recipientId: uuid("recipient_id").references(() => campaignRecipients.id, {
       onDelete: "cascade",
     }),
+    campaignId: uuid("campaign_id").references(() => campaigns.id, {
+      onDelete: "set null",
+    }),
+    communicationProfileId: uuid("communication_profile_id").references(() => communicationProfiles.id, {
+      onDelete: "set null",
+    }),
+    trackingProviderId: uuid("tracking_provider_id").references(() => trackingProviders.id, {
+      onDelete: "set null",
+    }),
     providerMessageId: text("provider_message_id"),
     type: emailEventType("type").notNull(),
     payload: jsonb("payload").$type<Record<string, unknown>>(),
@@ -559,6 +570,9 @@ export const emailEvents = pgTable(
   (t) => [
     index("email_events_recipient_idx").on(t.recipientId),
     index("email_events_provider_msg_idx").on(t.providerMessageId),
+    index("email_events_campaign_idx").on(t.campaignId),
+    index("email_events_profile_idx").on(t.communicationProfileId),
+    index("email_events_provider_idx").on(t.trackingProviderId),
     // Analytics: project-scoped aggregation + time-series by event type.
     index("email_events_project_type_time_idx").on(t.projectId, t.type, t.occurredAt),
   ],

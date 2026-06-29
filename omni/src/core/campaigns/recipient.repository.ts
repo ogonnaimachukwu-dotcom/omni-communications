@@ -316,17 +316,25 @@ export async function recordEvent(
   input: {
     projectId?: string | null;
     recipientId?: string | null;
+    campaignId?: string | null;
+    communicationProfileId?: string | null;
+    trackingProviderId?: string | null;
     providerMessageId?: string | null;
     type: EmailEventType;
     payload?: Record<string, unknown>;
+    occurredAt?: Date;
   },
   conn: DB = defaultDb,
 ): Promise<void> {
   await conn.insert(emailEvents).values({
     projectId: input.projectId ?? null,
     recipientId: input.recipientId ?? null,
+    campaignId: input.campaignId ?? null,
+    communicationProfileId: input.communicationProfileId ?? null,
+    trackingProviderId: input.trackingProviderId ?? null,
     providerMessageId: input.providerMessageId ?? null,
     type: input.type,
     payload: input.payload,
+    occurredAt: input.occurredAt ?? new Date(),
   });
 }

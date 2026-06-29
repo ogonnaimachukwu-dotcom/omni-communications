@@ -8,10 +8,12 @@ import { db } from "@/db";
 
 vi.mock("@/db", () => {
   const createQueryMock = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mockArr: any = [];
     mockArr.limit = vi.fn(() => mockArr);
     mockArr.offset = vi.fn(() => mockArr);
     mockArr.orderBy = vi.fn(() => mockArr);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     mockArr.then = (onfulfilled: any) => onfulfilled(mockArr);
     return mockArr;
   };

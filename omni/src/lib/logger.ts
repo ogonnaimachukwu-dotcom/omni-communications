@@ -8,6 +8,7 @@ export interface LogContext {
   projectId?: string;
   campaignId?: string;
   mailboxId?: string;
+  inboxConnectionId?: string;
   workerId?: string;
   jobId?: string;
 }

@@ -1,23 +1,21 @@
 import "@/env"; // validate env at boot
 import { getBoss, stopBoss } from "@/lib/queue";
-import { QUEUES, type SendCampaignJob, type SendCampaignRecipientJob, type SyncMailboxJob } from "@/lib/queue/jobs";
+import { QUEUES, type SendCampaignJob, type SendCampaignRecipientJob, type SyncMailboxJob, type SyncInboxConnectionJob } from "@/lib/queue/jobs";
 import { handleSendCampaign } from "./handlers/send-campaign";
 import { handleSendRecipient } from "./handlers/send-recipient";
-import { handleSyncMailbox } from "./handlers/sync-mailbox";
-import * as mailboxRepo from "@/core/mailboxes/mailbox.repository";
+import { handleSyncInbox, handleSyncMailbox } from "./handlers/sync-mailbox";
+import * as commRepo from "@/core/communication/communication.repository";
 import { logStorage, logger } from "@/lib/logger";
 import { randomUUID } from "crypto";
 import { closeDatabase } from "@/db";
 import { trace } from "@/lib/tracing";
 
 /**
- * Worker process. Boots pg-boss and registers the campaign send pipeline:
- *   SEND_CAMPAIGN           -> fan-out: freeze audience, enqueue recipients
- *   SEND_CAMPAIGN_RECIPIENT -> render -> suppression re-check -> send -> ledger
- *   SYNC_MAILBOX_INBOX      -> sync recent bounce NDRs from Gmail/Outlook
- *
- * Recipient concurrency is bounded (batchSize) to stay within Resend rate
- * limits and the 2 CPU / 2 GB VPS.
+ * Worker process. Boots pg-boss and registers the full job pipeline:
+ *   SEND_CAMPAIGN              -> fan-out: freeze audience, enqueue recipients
+ *   SEND_CAMPAIGN_RECIPIENT    -> render -> suppression re-check -> send -> ledger
+ *   SYNC_INBOX_CONNECTION      -> fetch new IMAP/OAuth messages, persist to inbox_messages
+ *   SYNC_MAILBOX_INBOX (legacy)-> retained for backward compat, now no-op
  */
 async function main() {
   const boss = await getBoss();
@@ -25,8 +23,10 @@ async function main() {
 
   await boss.createQueue(QUEUES.SEND_CAMPAIGN);
   await boss.createQueue(QUEUES.SEND_CAMPAIGN_RECIPIENT);
-  await boss.createQueue(QUEUES.SYNC_MAILBOX_INBOX);
-  await boss.createQueue("mailbox-sync-cron");
+  await boss.createQueue(QUEUES.SYNC_INBOX_CONNECTION);
+  await boss.createQueue(QUEUES.SYNC_MAILBOX_INBOX); // legacy
+  await boss.createQueue("inbox-sync-cron");
+  await boss.createQueue("mailbox-sync-cron"); // legacy cron slot
 
   await boss.work<SendCampaignJob>(QUEUES.SEND_CAMPAIGN, async (jobs) => {
     const job = jobs[0];
@@ -72,9 +72,9 @@ async function main() {
     },
   );
 
-  // Sync worker running with low concurrency (2) to prevent VPS RAM/CPU exhaustion
-  await boss.work<SyncMailboxJob>(
-    QUEUES.SYNC_MAILBOX_INBOX,
+  // Inbox sync worker — low concurrency to avoid hammering IMAP servers
+  await boss.work<SyncInboxConnectionJob>(
+    QUEUES.SYNC_INBOX_CONNECTION,
     { batchSize: 2 },
     async (jobs) => {
       for (const job of jobs) {
@@ -84,11 +84,11 @@ async function main() {
             workerId,
             jobId: job.id,
             correlationId,
-            mailboxId: job.data.mailboxId,
+            inboxConnectionId: job.data.inboxConnectionId,
           },
           async () => {
-            await trace("worker.job.sync_mailbox", async () => {
-              await handleSyncMailbox(job);
+            await trace("worker.job.sync_inbox", async () => {
+              await handleSyncInbox(job);
             });
           }
         );
@@ -96,28 +96,42 @@ async function main() {
     },
   );
 
-  // Cron coordinator: queries all active mailboxes and enqueues sync jobs
-  await boss.work<{ correlationId?: string }>("mailbox-sync-cron", async (jobs) => {
+  // Legacy mailbox bounce sync — kept for backward compat, now no-op
+  await boss.work<SyncMailboxJob>(
+    QUEUES.SYNC_MAILBOX_INBOX,
+    { batchSize: 2 },
+    async (jobs) => {
+      for (const job of jobs) {
+        await handleSyncMailbox(job);
+      }
+    },
+  );
+
+  // Inbox sync cron: query all active inbox connections every 10 minutes
+  await boss.work<{ correlationId?: string }>("inbox-sync-cron", async (jobs) => {
     const job = jobs[0];
     const correlationId = job ? (job.data.correlationId || job.id) : randomUUID();
     await logStorage.run(
-      {
-        workerId,
-        jobId: job?.id,
-        correlationId,
-      },
+      { workerId, jobId: job?.id, correlationId },
       async () => {
-        await trace("worker.cron.mailbox_sync", async () => {
-          const activeList = await mailboxRepo.listActive();
-          for (const mb of activeList) {
-            await boss.send(QUEUES.SYNC_MAILBOX_INBOX, { mailboxId: mb.id } satisfies SyncMailboxJob);
+        await trace("worker.cron.inbox_sync", async () => {
+          const activeInboxes = await commRepo.listActiveInboxConnections();
+          for (const inbox of activeInboxes) {
+            await boss.send(QUEUES.SYNC_INBOX_CONNECTION, {
+              inboxConnectionId: inbox.id,
+            } satisfies SyncInboxConnectionJob);
           }
+          logger.info("Inbox sync cron dispatched", { count: activeInboxes.length });
         });
       }
     );
   });
 
-  // Schedule cron execution every 10 minutes
+  // Legacy mailbox-sync-cron slot (no-op body, retained to avoid pg-boss missing-queue errors)
+  await boss.work<{ correlationId?: string }>("mailbox-sync-cron", async () => {});
+
+  // Schedule both crons every 10 minutes
+  await boss.schedule("inbox-sync-cron", "*/10 * * * *");
   await boss.schedule("mailbox-sync-cron", "*/10 * * * *");
 
   logger.info("Worker started", { queues: Object.values(QUEUES) });

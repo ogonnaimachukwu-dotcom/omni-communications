@@ -30,24 +30,34 @@ export const createSendingProviderInputSchema = z.object({
 export const inboxConnectionSchema = z.object({
   id: z.string().uuid(),
   projectId: z.string().uuid(),
+  name: z.string().min(1),
   email: z.string().email(),
   type: inboxConnectionTypeSchema,
+  host: z.string().nullable(),
+  port: z.number().int().nullable(),
+  tls: z.boolean().nullable(),
   status: inboxConnectionStatusSchema,
   credentials: z.string(), // SealedSecret stringified config JSON
   tokenExpiresAt: z.date().nullable(),
   lastSyncedAt: z.date().nullable(),
   syncCursor: z.string().nullable(),
+  folders: z.array(z.string()).nullable(),
   createdAt: z.date(),
   updatedAt: z.date(),
 });
 
 export const createInboxConnectionInputSchema = z.object({
   projectId: z.string().uuid(),
+  name: z.string().min(1),
   email: z.string().email(),
   type: inboxConnectionTypeSchema,
+  host: z.string().optional(),
+  port: z.number().int().optional(),
+  tls: z.boolean().optional(),
   credentials: z.string(),
   tokenExpiresAt: z.date().optional(),
 });
+
 
 export const trackingProviderSchema = z.object({
   id: z.string().uuid(),

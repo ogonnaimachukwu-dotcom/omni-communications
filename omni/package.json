@@ -26,7 +26,9 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.38.0",
+    "imapflow": "^1.4.3",
     "lucide-react": "^0.460.0",
+    "mailparser": "^3.9.12",
     "next": "^15.3.0",
     "nodemailer": "^9.0.1",
     "papaparse": "^5.5.4",
@@ -41,6 +43,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",
+    "@types/mailparser": "^3.4.6",
     "@types/node": "^22.10.0",
     "@types/nodemailer": "^8.0.1",
     "@types/papaparse": "^5.5.2",

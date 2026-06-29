@@ -81,13 +81,18 @@ export async function listInboxConnectionsByProject(projectId: string, userId: s
     .select({
       id: inboxConnections.id,
       projectId: inboxConnections.projectId,
+      name: inboxConnections.name,
       email: inboxConnections.email,
       type: inboxConnections.type,
+      host: inboxConnections.host,
+      port: inboxConnections.port,
+      tls: inboxConnections.tls,
       status: inboxConnections.status,
       credentials: inboxConnections.credentials,
       tokenExpiresAt: inboxConnections.tokenExpiresAt,
       lastSyncedAt: inboxConnections.lastSyncedAt,
       syncCursor: inboxConnections.syncCursor,
+      folders: inboxConnections.folders,
       createdAt: inboxConnections.createdAt,
       updatedAt: inboxConnections.updatedAt,
     })

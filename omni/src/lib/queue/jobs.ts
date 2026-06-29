@@ -8,7 +8,9 @@ export const QUEUES = {
   SEND_CAMPAIGN: "send-campaign",
   // Per-recipient: re-check suppression, render, send, update the ledger.
   SEND_CAMPAIGN_RECIPIENT: "send-campaign-recipient",
-  // Mailbox synchronization: fetch bounces (NDRs) for active mailboxes.
+  // Inbox sync: fetch and persist new messages from a configured inbox connection.
+  SYNC_INBOX_CONNECTION: "sync-inbox-connection",
+  // LEGACY: mailbox bounce sync (superseded by Resend webhooks — kept for in-flight jobs)
   SYNC_MAILBOX_INBOX: "sync-mailbox-inbox",
 } as const;
 
@@ -34,6 +36,12 @@ export interface SendCampaignRecipientJob {
   correlationId?: string;
 }
 
+export interface SyncInboxConnectionJob {
+  inboxConnectionId: string;
+  correlationId?: string;
+}
+
+/** @deprecated Use SyncInboxConnectionJob */
 export interface SyncMailboxJob {
   mailboxId: string;
   correlationId?: string;

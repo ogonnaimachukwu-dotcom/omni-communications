@@ -613,13 +613,18 @@ export const inboxConnections = pgTable(
     projectId: uuid("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),          // Human-readable label e.g. "CEO Inbox"
     email: text("email").notNull(),
     type: inboxConnectionType("type").notNull(),
+    host: text("host"),                    // IMAP host (null for OAuth)
+    port: integer("port"),                 // IMAP port (null for OAuth)
+    tls: boolean("tls").default(true),     // Use TLS/SSL
     status: inboxConnectionStatus("status").notNull().default("active"),
-    credentials: text("credentials").notNull(), // SealedSecret stringified config JSON
+    credentials: text("credentials").notNull(), // SealedSecret encrypted JSON
     tokenExpiresAt: timestamp("token_expires_at"),
     lastSyncedAt: timestamp("last_synced_at"),
-    syncCursor: text("sync_cursor"),
+    syncCursor: text("sync_cursor"),        // Last synced IMAP UID or Gmail historyId
+    folders: jsonb("folders").$type<string[]>().default([]),  // Discovered folder list
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at")
       .notNull()
@@ -694,11 +699,38 @@ export const inboxMessages = pgTable(
     projectId: uuid("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+
+    // IMAP identification
+    uid: integer("uid"),                                   // IMAP UID
+    folder: text("folder").notNull().default("INBOX"),
+    messageId: text("message_id"),                         // RFC 2822 Message-ID header
+    threadId: text("thread_id"),                           // Gmail thread ID or derived chain
+    inReplyTo: text("in_reply_to"),                        // In-Reply-To header for threading
+    references: text("references"),                        // References header (space-separated)
+
+    // Addresses
     fromAddress: text("from_address").notNull(),
     fromName: text("from_name"),
+    toAddresses: jsonb("to_addresses").$type<string[]>().default([]),
+    ccAddresses: jsonb("cc_addresses").$type<string[]>().default([]),
+
+    // Content
     subject: text("subject").notNull(),
     bodyHtml: text("body_html"),
     bodyText: text("body_text"),
+
+    // Attachments stored as JSON array of metadata (not binaries)
+    attachments: jsonb("attachments").$type<{
+      filename: string;
+      contentType: string;
+      size: number;
+      contentId?: string;
+    }[]>().default([]),
+
+    // Arbitrary additional headers (JSON object)
+    headers: jsonb("headers").$type<Record<string, string>>().default({}),
+
+    // State
     isRead: boolean("is_read").notNull().default(false),
     sentiment: messageSentiment("sentiment").notNull().default("neutral"),
     aiSuggestedResponse: text("ai_suggested_response"),
@@ -708,6 +740,9 @@ export const inboxMessages = pgTable(
   (t) => [
     index("inbox_messages_connection_idx").on(t.inboxConnectionId),
     index("inbox_messages_project_idx").on(t.projectId),
+    index("inbox_messages_message_id_idx").on(t.messageId),
+    index("inbox_messages_thread_id_idx").on(t.threadId),
+    index("inbox_messages_received_idx").on(t.receivedAt),
   ]
 );
 

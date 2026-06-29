@@ -49,6 +49,7 @@ describe("Communication Engine Validation Schemas", () => {
   it("validates inbox connection inputs correctly", () => {
     const valid = {
       projectId: "d11ff74a-3311-4742-ce12-01941be5c201",
+      name: "My Inbox",
       email: "ceo@company.com",
       type: "imap",
       credentials: "sealed:{}",

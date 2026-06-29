@@ -57,13 +57,14 @@ export async function runDataMigration() {
         .insert(inboxConnections)
         .values({
           projectId: mailbox.projectId,
+          name: mailbox.email,          // use email as default name during migration
           email: mailbox.email,
           type: isGmail ? "oauth_gmail" : "oauth_outlook",
           status: mailbox.status === "active" ? "active" : "invalid",
-          credentials: mailbox.credentials, // reuse same sealed secret
-          tokenExpiresAt: mailbox.tokenExpiresAt,
-          lastSyncedAt: mailbox.lastSyncedAt,
-          syncCursor: mailbox.syncCursor,
+          credentials: mailbox.credentials || "",
+          tokenExpiresAt: mailbox.tokenExpiresAt ? new Date(mailbox.tokenExpiresAt) : null,
+          lastSyncedAt: mailbox.lastSyncedAt ? new Date(mailbox.lastSyncedAt) : null,
+          syncCursor: mailbox.syncCursor || "",
         })
         .returning();
 

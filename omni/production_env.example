@@ -1,0 +1,49 @@
+# =========================================================================
+# OMNI COMMUNICATIONS - VPS PRODUCTION ENVIRONMENT CONFIGURATION
+# =========================================================================
+# Copy this file to '.env' at the project root on your VPS:
+#   cp production_env.example .env
+# Replace all placeholders before launching!
+
+# ---- Node Environment ----
+NODE_ENV=production
+
+# ---- Application URLs ----
+# The public domain where operators will access the dashboard and webhooks resolve
+APP_URL=https://omni.yourdomain.com
+APP_DOMAIN=omni.yourdomain.com
+
+# ---- Database (PostgreSQL) ----
+# Format: postgres://[user]:[password]@[host]:[port]/[database]
+# Under Docker Compose, host should be "db".
+POSTGRES_PASSWORD=use-a-secure-random-db-password-here
+DATABASE_URL=postgres://omni:use-a-secure-random-db-password-here@db:5432/omni
+
+# ---- Better Auth Security Secrets ----
+# Generate key via terminal: openssl rand -base64 32
+BETTER_AUTH_SECRET=generate-a-secure-32-byte-base64-secret-key-here
+BETTER_AUTH_URL=https://omni.yourdomain.com
+
+# ---- Master Envelope Encryption Key ----
+# Master key for sealing third-party connection tokens (e.g. SMTP OAuth tokens).
+# MUST be exactly 32 bytes and base64-encoded.
+# Generate key via terminal: openssl rand -base64 32
+ENCRYPTION_MASTER_KEY=generate-a-secure-32-byte-base64-master-encryption-key-here
+
+# ---- Resend Sending Infrastructure ----
+# Resend API Key (re_...) for campaign dispatches
+RESEND_API_KEY=re_your_real_resend_api_key_goes_here
+# Resend Webhook signing secret (whsec_...) for delivery/bounce loop resolution
+RESEND_WEBHOOK_SECRET=whsec_your_resend_webhook_signing_secret_here
+
+# ---- AI Campaign Copywriter (Optional) ----
+# Anthropic API Key (sk-ant-...) to enable AI drafts
+# ANTHROPIC_API_KEY=sk-ant-your-anthropic-key-goes-here
+# ANTHROPIC_MODEL=claude-3-5-sonnet-latest
+
+# ---- Mailbox OAuth Credentials (Optional - Phase 2) ----
+# Required if operators hook up Gmail / Microsoft Outlook accounts.
+# GOOGLE_CLIENT_ID=google-client-id
+# GOOGLE_CLIENT_SECRET=google-client-secret
+# MICROSOFT_CLIENT_ID=microsoft-client-id
+# MICROSOFT_CLIENT_SECRET=microsoft-client-secret

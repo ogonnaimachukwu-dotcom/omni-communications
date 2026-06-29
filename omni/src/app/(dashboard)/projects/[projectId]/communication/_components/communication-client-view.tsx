@@ -2,12 +2,12 @@
 
 import { useState, useEffect } from "react";
 import {
-  createSendingProviderAction,
-  removeSendingProviderAction,
-  testSendingProviderAction,
   createInboxConnectionAction,
   removeInboxConnectionAction,
   testInboxConnectionAction,
+  createSendingProviderAction,
+  removeSendingProviderAction,
+  testSendingProviderAction,
   createTrackingProviderAction,
   removeTrackingProviderAction,
   createCommunicationProfileAction,
@@ -15,6 +15,8 @@ import {
   updateSendingProviderAction,
   setDefaultSendingProviderAction,
   getProviderStatisticsAction,
+  discoverInboxFoldersAction,
+  syncInboxNowAction,
 } from "../actions";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Plus, Trash, Activity, Check, AlertCircle, RefreshCw, Send, Mail, ShieldCheck, Settings, Star, Edit2 } from "lucide-react";
@@ -31,10 +33,15 @@ interface SenderItem {
 
 interface InboxItem {
   id: string;
+  name: string;
   email: string;
   type: string;
   status: string;
+  host: string | null;
+  port: number | null;
+  tls: boolean | null;
   lastSyncedAt: Date | null;
+  folders: string[] | null;
 }
 
 interface TrackerItem {
@@ -77,7 +84,7 @@ export function CommunicationClientView({
   const [profiles, setProfiles] = useState<ProfileItem[]>(initialProfiles);
 
   const [loading, setLoading] = useState<string | null>(null);
-  const [stats, setStats] = useState<any[]>([]);
+  const [stats, setStats] = useState<{ providerId: string; sent: number; delivered: number; failed: number }[]>([]);
   const [editingSenderId, setEditingSenderId] = useState<string | null>(null);
 
   // Form states
@@ -90,13 +97,15 @@ export function CommunicationClientView({
   const [smtpUser, setSmtpUser] = useState("");
   const [smtpPass, setSmtpPass] = useState("");
 
+  const [inboxName, setInboxName] = useState("");
   const [inboxEmail, setInboxEmail] = useState("");
-  const [inboxType, setInboxType] = useState<"imap">("imap");
+  const [inboxType, setInboxType] = useState<"imap" | "oauth_gmail" | "oauth_outlook">("imap");
   const [imapHost, setImapHost] = useState("");
   const [imapPort, setImapPort] = useState("993");
   const [imapSecure, setImapSecure] = useState(true);
   const [imapUser, setImapUser] = useState("");
   const [imapPass, setImapPass] = useState("");
+  const [selectedInboxId, setSelectedInboxId] = useState<string | null>(null);
 
   const [trackerName, setTrackerName] = useState("");
   const [trackerSecret, setTrackerSecret] = useState("");
@@ -123,7 +132,7 @@ export function CommunicationClientView({
   const handleEditSender = (s: SenderItem) => {
     setEditingSenderId(s.id);
     setSenderName(s.name);
-    setSenderType(s.type as any);
+    setSenderType(s.type as "resend" | "smtp");
     setResendKey("");
     setSmtpHost("");
     setSmtpPort("587");
@@ -214,18 +223,71 @@ export function CommunicationClientView({
     e.preventDefault();
     setLoading("add_inbox");
     try {
-      const config = { host: imapHost, port: Number(imapPort), secure: imapSecure, username: imapUser, password: imapPass };
-      const newInbox = await createInboxConnectionAction(projectId, inboxEmail, "imap", config);
+      const config = {
+        host: imapHost || undefined,
+        port: imapHost ? Number(imapPort) : undefined,
+        tls: imapSecure,
+        username: imapUser || undefined,
+        password: imapPass || undefined,
+      };
+      const newInbox = await createInboxConnectionAction(
+        projectId,
+        inboxName,
+        inboxEmail,
+        inboxType,
+        config
+      );
       setInboxes([
         ...inboxes,
-        { id: newInbox.id, email: newInbox.email, type: newInbox.type, status: newInbox.status, lastSyncedAt: null },
+        {
+          id: newInbox.id,
+          name: newInbox.name,
+          email: newInbox.email,
+          type: newInbox.type,
+          status: newInbox.status,
+          host: newInbox.host ?? null,
+          port: newInbox.port ?? null,
+          tls: newInbox.tls ?? null,
+          lastSyncedAt: null,
+          folders: null,
+        },
       ]);
+      setInboxName("");
       setInboxEmail("");
       setImapHost("");
       setImapUser("");
       setImapPass("");
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to add inbox");
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  async function handleSyncInbox(id: string) {
+    setLoading(`sync_${id}`);
+    try {
+      const result = await syncInboxNowAction(projectId, id);
+      setInboxes(inboxes.map(i =>
+        i.id === id ? { ...i, status: "active", lastSyncedAt: new Date() } : i
+      ));
+      alert(`Sync complete: ${result.messagesNew} new messages`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Sync failed");
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  async function handleDiscoverFolders(id: string) {
+    setLoading(`discover_${id}`);
+    try {
+      const folders = await discoverInboxFoldersAction(projectId, id);
+      setInboxes(inboxes.map(i =>
+        i.id === id ? { ...i, folders } : i
+      ));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Folder discovery failed");
     } finally {
       setLoading(null);
     }
@@ -466,42 +528,84 @@ export function CommunicationClientView({
               <Mail className="size-5 text-indigo-500" />
               Inbox Connections
             </CardTitle>
-            <CardDescription>IMAP configurations listening only for recipient replies.</CardDescription>
+            <CardDescription>IMAP / OAuth inboxes that sync replies from recipients.</CardDescription>
           </CardHeader>
           <CardContent>
             {inboxes.length === 0 ? (
-              <div className="text-center py-6 text-sm text-muted-foreground">No inbox connections verified.</div>
+              <div className="text-center py-6 text-sm text-muted-foreground">No inbox connections configured.</div>
             ) : (
               <div className="space-y-3">
                 {inboxes.map(i => (
-                  <div key={i.id} className="flex items-center justify-between p-3 border border-border rounded-lg bg-background">
-                    <div className="flex items-center gap-2.5">
-                      <div
-                        className={cn(
-                          "size-2 rounded-full",
-                          i.status === "active" ? "bg-emerald-500" : "bg-rose-500"
-                        )}
-                      />
-                      <div>
-                        <div className="font-semibold text-sm">{i.email}</div>
-                        <div className="text-xs text-muted-foreground uppercase">{i.type}</div>
+                  <div key={i.id} className="flex flex-col gap-2 p-3 border border-border rounded-lg bg-background">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className={cn(
+                            "size-2 rounded-full flex-shrink-0",
+                            i.status === "active" ? "bg-emerald-500" : "bg-rose-500"
+                          )}
+                        />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-sm">{i.name}</span>
+                            <span className={cn(
+                              "text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase",
+                              i.type === "imap" ? "bg-sky-500/15 text-sky-400 border border-sky-500/30" :
+                              i.type === "oauth_gmail" ? "bg-red-500/15 text-red-400 border border-red-500/30" :
+                              "bg-blue-500/15 text-blue-400 border border-blue-500/30"
+                            )}>
+                              {i.type === "imap" ? "IMAP" : i.type === "oauth_gmail" ? "Gmail" : "Outlook"}
+                            </span>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {i.email}
+                            {i.host && <span className="ml-2 opacity-60">{i.host}:{i.port}</span>}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => handleSyncInbox(i.id)}
+                          disabled={loading === `sync_${i.id}` || i.status !== "active"}
+                          className="p-1.5 text-muted-foreground hover:text-emerald-400 rounded hover:bg-muted transition-colors flex items-center gap-1 text-xs"
+                          title="Sync now"
+                        >
+                          <RefreshCw className={cn("size-3.5", loading === `sync_${i.id}` && "animate-spin")} />
+                          Sync
+                        </button>
+                        <button
+                          onClick={() => handleDiscoverFolders(i.id)}
+                          disabled={loading === `discover_${i.id}` || i.status !== "active"}
+                          className="p-1.5 text-muted-foreground hover:text-indigo-400 rounded hover:bg-muted transition-colors text-xs flex items-center gap-1"
+                          title="Discover folders"
+                        >
+                          <Settings className="size-3.5" />
+                          Folders
+                        </button>
+                        <button
+                          onClick={() => handleTestInbox(i.id)}
+                          disabled={loading === i.id}
+                          className="p-1.5 text-muted-foreground hover:text-foreground rounded hover:bg-muted transition-colors flex items-center gap-1 text-xs"
+                        >
+                          <Activity className="size-3.5" />
+                          Verify
+                        </button>
+                        <button
+                          onClick={() => handleRemoveInbox(i.id)}
+                          className="p-1.5 text-muted-foreground hover:text-destructive rounded hover:bg-muted transition-colors"
+                        >
+                          <Trash className="size-4" />
+                        </button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleTestInbox(i.id)}
-                        disabled={loading === i.id}
-                        className="p-1.5 text-muted-foreground hover:text-foreground rounded hover:bg-muted transition-colors flex items-center gap-1 text-xs"
-                      >
-                        <Activity className="size-3.5" />
-                        Verify
-                      </button>
-                      <button
-                        onClick={() => handleRemoveInbox(i.id)}
-                        className="p-1.5 text-muted-foreground hover:text-destructive rounded hover:bg-muted transition-colors"
-                      >
-                        <Trash className="size-4" />
-                      </button>
+
+                    {/* Metadata row */}
+                    <div className="flex gap-4 text-[11px] text-muted-foreground border-t border-border/50 pt-2">
+                      <span>Last sync: <strong className="text-foreground">{i.lastSyncedAt ? new Date(i.lastSyncedAt).toLocaleString() : "Never"}</strong></span>
+                      {i.folders && i.folders.length > 0 && (
+                        <span>Folders: <strong className="text-foreground">{i.folders.length}</strong></span>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -611,7 +715,7 @@ export function CommunicationClientView({
                 <label className="text-xs font-semibold text-muted-foreground">Type</label>
                 <select
                   value={senderType}
-                  onChange={e => setSenderType(e.target.value as any)}
+                  onChange={e => setSenderType(e.target.value as "resend" | "smtp")}
                   className="w-full mt-1 px-3 py-1.5 border border-border rounded bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 >
                   <option value="resend">Resend API Key</option>
@@ -724,9 +828,35 @@ export function CommunicationClientView({
         <Card className="border-border bg-card">
           <CardHeader>
             <CardTitle className="text-sm">Add Inbox Connection</CardTitle>
+            <CardDescription className="text-xs">Connect any IMAP mailbox or OAuth inbox to receive replies.</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleAddInbox} className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground">Display Name</label>
+                <input
+                  type="text"
+                  required
+                  value={inboxName}
+                  onChange={e => setInboxName(e.target.value)}
+                  placeholder="CEO Inbox"
+                  className="w-full mt-1 px-3 py-1.5 border border-border rounded bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground">Connection Type</label>
+                <select
+                  value={inboxType}
+                  onChange={e => setInboxType(e.target.value as "imap" | "oauth_gmail" | "oauth_outlook")}
+                  className="w-full mt-1 px-3 py-1.5 border border-border rounded bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  <option value="imap">Generic IMAP (Roundcube, cPanel, Zoho, Hostinger…)</option>
+                  <option value="oauth_gmail">Gmail OAuth</option>
+                  <option value="oauth_outlook">Outlook / Exchange OAuth</option>
+                </select>
+              </div>
+
               <div>
                 <label className="text-xs font-semibold text-muted-foreground">Email Address</label>
                 <input
@@ -739,61 +869,72 @@ export function CommunicationClientView({
                 />
               </div>
 
-              <div>
-                <label className="text-xs font-semibold text-muted-foreground">IMAP Host</label>
-                <input
-                  type="text"
-                  required
-                  value={imapHost}
-                  onChange={e => setImapHost(e.target.value)}
-                  placeholder="imap.company.com"
-                  className="w-full mt-1 px-3 py-1.5 border border-border rounded bg-background text-sm text-foreground focus:outline-none"
-                />
-              </div>
+              {inboxType === "imap" && (
+                <>
+                  <div>
+                    <label className="text-xs font-semibold text-muted-foreground">IMAP Host</label>
+                    <input
+                      type="text"
+                      required
+                      value={imapHost}
+                      onChange={e => setImapHost(e.target.value)}
+                      placeholder="imap.company.com"
+                      className="w-full mt-1 px-3 py-1.5 border border-border rounded bg-background text-sm text-foreground focus:outline-none"
+                    />
+                  </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs font-semibold text-muted-foreground">IMAP Port</label>
-                  <input
-                    type="text"
-                    required
-                    value={imapPort}
-                    onChange={e => setImapPort(e.target.value)}
-                    className="w-full mt-1 px-3 py-1.5 border border-border rounded bg-background text-sm text-foreground focus:outline-none"
-                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs font-semibold text-muted-foreground">IMAP Port</label>
+                      <input
+                        type="number"
+                        required
+                        value={imapPort}
+                        onChange={e => setImapPort(e.target.value)}
+                        className="w-full mt-1 px-3 py-1.5 border border-border rounded bg-background text-sm text-foreground focus:outline-none"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 pt-5">
+                      <input
+                        type="checkbox"
+                        checked={imapSecure}
+                        onChange={e => setImapSecure(e.target.checked)}
+                        className="rounded accent-indigo-500"
+                      />
+                      <label className="text-xs font-semibold text-muted-foreground">TLS / SSL</label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-muted-foreground">Username</label>
+                    <input
+                      type="text"
+                      required
+                      value={imapUser}
+                      onChange={e => setImapUser(e.target.value)}
+                      className="w-full mt-1 px-3 py-1.5 border border-border rounded bg-background text-sm text-foreground focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-muted-foreground">Password</label>
+                    <input
+                      type="password"
+                      required
+                      value={imapPass}
+                      onChange={e => setImapPass(e.target.value)}
+                      className="w-full mt-1 px-3 py-1.5 border border-border rounded bg-background text-sm text-foreground focus:outline-none"
+                    />
+                  </div>
+                </>
+              )}
+
+              {(inboxType === "oauth_gmail" || inboxType === "oauth_outlook") && (
+                <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-3 text-xs text-indigo-300">
+                  OAuth connections require an access token obtained through the provider OAuth flow.
+                  Contact your administrator or use the OAuth callback integration to provision credentials.
                 </div>
-                <div className="flex items-center gap-2 pt-5">
-                  <input
-                    type="checkbox"
-                    checked={imapSecure}
-                    onChange={e => setImapSecure(e.target.checked)}
-                    className="rounded accent-indigo-500"
-                  />
-                  <label className="text-xs font-semibold text-muted-foreground">Secure (SSL)</label>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-muted-foreground">Username</label>
-                <input
-                  type="text"
-                  required
-                  value={imapUser}
-                  onChange={e => setImapUser(e.target.value)}
-                  className="w-full mt-1 px-3 py-1.5 border border-border rounded bg-background text-sm text-foreground focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-muted-foreground">Password</label>
-                <input
-                  type="password"
-                  required
-                  value={imapPass}
-                  onChange={e => setImapPass(e.target.value)}
-                  className="w-full mt-1 px-3 py-1.5 border border-border rounded bg-background text-sm text-foreground focus:outline-none"
-                />
-              </div>
+              )}
 
               <button
                 type="submit"
@@ -806,6 +947,7 @@ export function CommunicationClientView({
             </form>
           </CardContent>
         </Card>
+
       </div>
     </div>
   );

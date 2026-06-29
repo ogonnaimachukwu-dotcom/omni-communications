@@ -47,10 +47,15 @@ export default async function ProjectCommunicationPage({
 
   const inboxes = inboxList.map(i => ({
     id: i.id,
+    name: i.name,
     email: i.email,
     type: i.type,
+    host: i.host,
+    port: i.port,
+    tls: i.tls,
     status: i.status,
     lastSyncedAt: i.lastSyncedAt,
+    folders: i.folders ?? null,
   }));
 
   const trackers = trackingList.map(t => ({

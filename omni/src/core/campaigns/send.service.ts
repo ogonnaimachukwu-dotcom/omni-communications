@@ -235,7 +235,7 @@ export async function sendRecipient(job: SendCampaignRecipientJob): Promise<void
     unsubscribeUrl: url,
   });
 
-  let transport: any;
+  let transport: import("@/lib/email/types").EmailTransport | undefined;
   try {
     transport = await getCampaignTransport(campaign);
     const { providerMessageId } = await transport.send({

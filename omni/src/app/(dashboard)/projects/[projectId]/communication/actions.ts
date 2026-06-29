@@ -145,9 +145,18 @@ export async function getProviderStatisticsAction(projectId: string) {
 // --- Inbox Connections ---
 export async function createInboxConnectionAction(
   projectId: string,
+  name: string,
   email: string,
   type: "imap" | "oauth_gmail" | "oauth_outlook",
-  config: Record<string, unknown>
+  config: {
+    host?: string;
+    port?: number;
+    tls?: boolean;
+    username?: string;
+    password?: string;
+    accessToken?: string;
+    refreshToken?: string;
+  }
 ) {
   const session = await assertSession();
   await requireProject(projectId, session.user.id);
@@ -155,8 +164,12 @@ export async function createInboxConnectionAction(
   const sealed = sealToString(JSON.stringify(config));
   const conn = await repo.createInboxConnection({
     projectId,
+    name,
     email,
     type,
+    host: config.host,
+    port: config.port,
+    tls: config.tls ?? true,
     credentials: sealed,
   });
 
@@ -166,7 +179,7 @@ export async function createInboxConnectionAction(
     action: "inbox_connection.created",
     entityType: "inbox_connection",
     entityId: conn.id,
-    metadata: { email, type },
+    metadata: { name, email, type },
   });
 
   revalidatePath(`/projects/${projectId}/communication`);
@@ -200,10 +213,58 @@ export async function testInboxConnectionAction(projectId: string, id: string) {
   const session = await assertSession();
   await requireProject(projectId, session.user.id);
 
-  const success = await service.testInboxConnection(id);
+  const { testInboxConnection } = await import("@/core/communication/inbox.sync.service");
+  const success = await testInboxConnection(id);
 
   revalidatePath(`/projects/${projectId}/communication`);
   return success;
+}
+
+export async function discoverInboxFoldersAction(projectId: string, id: string) {
+  const session = await assertSession();
+  await requireProject(projectId, session.user.id);
+
+  const existing = await repo.findInboxConnectionById(id);
+  if (!existing || existing.projectId !== projectId) {
+    throw new Error("Inbox connection not found");
+  }
+
+  const { discoverInboxFolders } = await import("@/core/communication/inbox.sync.service");
+  return discoverInboxFolders(id);
+}
+
+export async function syncInboxNowAction(projectId: string, id: string) {
+  const session = await assertSession();
+  await requireProject(projectId, session.user.id);
+
+  const existing = await repo.findInboxConnectionById(id);
+  if (!existing || existing.projectId !== projectId) {
+    throw new Error("Inbox connection not found");
+  }
+
+  const { syncInboxConnection } = await import("@/core/communication/inbox.sync.service");
+  const result = await syncInboxConnection(id);
+
+  revalidatePath(`/projects/${projectId}/communication`);
+  return result;
+}
+
+export async function listInboxMessagesAction(
+  projectId: string,
+  inboxConnectionId: string,
+  folder?: string,
+  limit = 50
+) {
+  const session = await assertSession();
+  await requireProject(projectId, session.user.id);
+
+  const existing = await repo.findInboxConnectionById(inboxConnectionId);
+  if (!existing || existing.projectId !== projectId) {
+    throw new Error("Inbox connection not found");
+  }
+
+  const { listInboxMessages } = await import("@/core/communication/inbox.sync.service");
+  return listInboxMessages(inboxConnectionId, limit, folder);
 }
 
 // --- Tracking Providers ---

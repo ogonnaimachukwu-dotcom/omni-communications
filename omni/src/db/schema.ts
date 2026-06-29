@@ -13,6 +13,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { user } from "./auth-schema";
+export { user };
 
 /* =========================================================================
  * Enums
@@ -83,6 +84,17 @@ export const trackingProviderType = pgEnum("tracking_provider_type", ["resend_we
 export const trackingProviderStatus = pgEnum("tracking_provider_status", ["active", "disabled"]);
 export const healthStatus = pgEnum("health_status", ["healthy", "warning", "unhealthy"]);
 export const messageSentiment = pgEnum("message_sentiment", ["positive", "neutral", "negative", "bounce"]);
+export const conversationStatus = pgEnum("conversation_status", [
+  "open",
+  "waiting",
+  "closed",
+  "spam",
+  "interested",
+  "meeting",
+  "won",
+  "lost",
+]);
+
 
 // The per-recipient send ledger lifecycle.
 export const recipientStatus = pgEnum("recipient_status", [
@@ -689,6 +701,48 @@ export const communicationProfiles = pgTable(
   (t) => [index("communication_profiles_project_idx").on(t.projectId)]
 );
 
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id").references(() => campaigns.id, {
+      onDelete: "set null",
+    }),
+    distributorId: uuid("distributor_id").references(() => distributors.id, {
+      onDelete: "set null",
+    }),
+    communicationProfileId: uuid("communication_profile_id").references(() => communicationProfiles.id, {
+      onDelete: "set null",
+    }),
+    inboxConnectionId: uuid("inbox_connection_id")
+      .notNull()
+      .references(() => inboxConnections.id, { onDelete: "cascade" }),
+    assigneeId: text("assignee_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    status: conversationStatus("status").notNull().default("open"),
+    subject: text("subject").notNull(),
+    lastMessageAt: timestamp("last_message_at")
+      .notNull()
+      .defaultNow(),
+    aiSummary: text("ai_summary"),
+    leadScore: integer("lead_score"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index("conversations_project_idx").on(t.projectId),
+    index("conversations_status_idx").on(t.status),
+    index("conversations_last_msg_idx").on(t.lastMessageAt),
+  ]
+);
+
 export const inboxMessages = pgTable(
   "inbox_messages",
   {
@@ -699,6 +753,9 @@ export const inboxMessages = pgTable(
     projectId: uuid("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id").references(() => conversations.id, {
+      onDelete: "cascade",
+    }),
 
     // IMAP identification
     uid: integer("uid"),                                   // IMAP UID
@@ -743,16 +800,20 @@ export const inboxMessages = pgTable(
     index("inbox_messages_message_id_idx").on(t.messageId),
     index("inbox_messages_thread_id_idx").on(t.threadId),
     index("inbox_messages_received_idx").on(t.receivedAt),
+    index("inbox_messages_conversation_idx").on(t.conversationId),
   ]
 );
+
 
 export const outboundReplies = pgTable(
   "outbound_replies",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    conversationId: uuid("conversation_id").references(() => conversations.id, {
+      onDelete: "cascade",
+    }),
     inboxMessageId: uuid("inbox_message_id")
-      .notNull()
-      .references(() => inboxMessages.id, { onDelete: "cascade" }),
+      .references(() => inboxMessages.id, { onDelete: "cascade" }), // nullable, since a reply can be direct to conversation thread
     sendingProviderId: uuid("sending_provider_id")
       .notNull()
       .references(() => sendingProviders.id, { onDelete: "cascade" }),
@@ -762,6 +823,7 @@ export const outboundReplies = pgTable(
   (t) => [
     index("outbound_replies_message_idx").on(t.inboxMessageId),
     index("outbound_replies_provider_idx").on(t.sendingProviderId),
+    index("outbound_replies_conversation_idx").on(t.conversationId),
   ]
 );
 

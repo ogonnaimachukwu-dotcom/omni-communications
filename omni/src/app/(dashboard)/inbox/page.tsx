@@ -1,45 +1,41 @@
-import { Inbox, ShieldCheck } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { redirect } from "next/navigation";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
+import { listProjects } from "@/core/projects/project.service";
+import Link from "next/link";
+import { Inbox, Plus } from "lucide-react";
+import { buttonVariants } from "@/components/ui/button";
 
-export default function InboxPage() {
+export default async function InboxPage() {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) redirect("/login");
+
+  // Query projects for user
+  const { items } = await listProjects({ page: 1, pageSize: 10, trash: false }, session.user.id);
+
+  if (items.length > 0) {
+    // Redirect to the first project's inbox workspace
+    redirect(`/projects/${items[0].id}/inbox`);
+  }
+
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Inbox</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Centralized reply-management and conversation history.
+    <div className="mx-auto max-w-md space-y-6 py-20 text-center">
+      <div className="size-16 rounded-2xl bg-indigo-500/5 border border-indigo-500/10 flex items-center justify-center text-indigo-400 mx-auto">
+        <Inbox className="size-8" />
+      </div>
+      <div className="space-y-2">
+        <h1 className="text-xl font-bold tracking-tight text-foreground">Reply Center</h1>
+        <p className="text-sm text-muted-foreground max-w-sm mx-auto">
+          Please create or select a Project to access its dedicated inbound Reply Center workspace.
         </p>
       </div>
-
-      <Card className="border-border bg-card">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Inbox className="size-5 text-primary" />
-            Background Sync Status
-          </CardTitle>
-          <CardDescription>
-            Monitoring inbound email bounces and NDR events.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-start gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4 text-emerald-600">
-            <ShieldCheck className="size-5 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-semibold">Bounce Registry Active</p>
-              <p className="text-xs text-emerald-600/80 mt-1">
-                The sync worker is currently polling all connected mailboxes every 10 minutes, automatically processing Non-Delivery Reports (NDRs), updating suppressions, and updating recipient metrics.
-              </p>
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-border bg-secondary/30 p-6 text-center">
-            <h3 className="text-sm font-medium text-foreground">Interactive Conversations Coming Soon</h3>
-            <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">
-              Phase 3 Reply Management will enable direct, inline email messaging, automated reply classification, and AI-assisted drafting directly from this screen.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      <div>
+        <Link href="/projects/new" className={buttonVariants()}>
+          <Plus className="size-4 mr-1.5" />
+          Create Project
+        </Link>
+      </div>
     </div>
   );
 }
+

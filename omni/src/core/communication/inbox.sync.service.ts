@@ -22,9 +22,17 @@ import * as repo from "@/core/communication/communication.repository";
 import { createInboxAdapter } from "@/lib/inbox";
 import type { ParsedMessage } from "@/lib/inbox/types";
 import { db } from "@/db";
-import { inboxMessages } from "@/db/schema";
-import { and, eq } from "drizzle-orm";
+import {
+  inboxMessages,
+  conversations,
+  campaignRecipients,
+  distributors,
+  distributorLists,
+  campaigns,
+} from "@/db/schema";
+import { and, eq, or, desc, inArray } from "drizzle-orm";
 import { logger } from "@/lib/logger";
+
 
 // --- Token refresh ---
 
@@ -87,7 +95,192 @@ async function refreshOAuthToken(inboxId: string, credentials: Record<string, st
   return freshToken;
 }
 
-// --- Message persistence ---
+// --- Message persistence with Threading / Conversation Engine ---
+
+async function resolveOrCreateConversation(
+  inboxConnectionId: string,
+  projectId: string,
+  msg: ParsedMessage
+): Promise<string> {
+  // 1. Threading via references / in-reply-to headers
+  const referencesList: string[] = [];
+  if (msg.inReplyTo) referencesList.push(msg.inReplyTo);
+  if (msg.references) {
+    msg.references.split(/\s+/).forEach((ref) => {
+      if (ref && !referencesList.includes(ref)) referencesList.push(ref);
+    });
+  }
+
+  if (referencesList.length > 0) {
+    const [matchingMessage] = await db
+      .select({ conversationId: inboxMessages.conversationId })
+      .from(inboxMessages)
+      .where(
+        and(
+          eq(inboxMessages.projectId, projectId),
+          inArray(inboxMessages.messageId, referencesList)
+        )
+      )
+      .limit(1);
+
+    if (matchingMessage?.conversationId) {
+      // Found matching thread! Let's update the conversation's active state
+      await db
+        .update(conversations)
+        .set({
+          status: "open", // Reopen if closed/spam
+          lastMessageAt: msg.receivedAt,
+          updatedAt: new Date(),
+        })
+        .where(eq(conversations.id, matchingMessage.conversationId));
+
+      return matchingMessage.conversationId;
+    }
+  }
+
+  // 2. Fallback: Find active conversation by sender's email
+  const fromEmail = msg.fromAddress.trim().toLowerCase();
+  const [existingActiveConv] = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .leftJoin(distributors, eq(conversations.distributorId, distributors.id))
+    .where(
+      and(
+        eq(conversations.projectId, projectId),
+        eq(conversations.inboxConnectionId, inboxConnectionId),
+        or(
+          eq(distributors.email, fromEmail),
+          eq(conversations.subject, msg.subject)
+        )
+      )
+    )
+    .orderBy(desc(conversations.lastMessageAt))
+    .limit(1);
+
+  if (existingActiveConv?.id) {
+    await db
+      .update(conversations)
+      .set({
+        status: "open",
+        lastMessageAt: msg.receivedAt,
+        updatedAt: new Date(),
+      })
+      .where(eq(conversations.id, existingActiveConv.id));
+
+    return existingActiveConv.id;
+  }
+
+  // 3. Fallback: Match by campaign recipient to bind contact (distributor) & campaign
+  const [recipient] = await db
+    .select({
+      campaignId: campaignRecipients.campaignId,
+      distributorId: campaignRecipients.distributorId,
+    })
+    .from(campaignRecipients)
+    .where(
+      and(
+        eq(campaignRecipients.projectId, projectId),
+        eq(campaignRecipients.email, fromEmail)
+      )
+    )
+    .limit(1);
+
+  let distributorId = recipient?.distributorId || null;
+  const campaignId = recipient?.campaignId || null;
+
+  // 4. Resolve or auto-provision Distributor (Contact) if not found
+  if (!distributorId) {
+    const [existingContact] = await db
+      .select({ id: distributors.id })
+      .from(distributors)
+      .where(
+        and(
+          eq(distributors.projectId, projectId),
+          eq(distributors.email, fromEmail)
+        )
+      )
+      .limit(1);
+
+    if (existingContact) {
+      distributorId = existingContact.id;
+    } else {
+      // Find or create "Synced Replies" distributor list
+      let listId: string;
+      const [existingList] = await db
+        .select({ id: distributorLists.id })
+        .from(distributorLists)
+        .where(
+          and(
+            eq(distributorLists.projectId, projectId),
+            eq(distributorLists.name, "Synced Replies")
+          )
+        )
+        .limit(1);
+
+      if (existingList) {
+        listId = existingList.id;
+      } else {
+        const [createdList] = await db
+          .insert(distributorLists)
+          .values({
+            projectId,
+            name: "Synced Replies",
+            description: "Auto-provisioned contact list for incoming inbox sync replies",
+          })
+          .returning();
+        listId = createdList.id;
+      }
+
+      const [createdContact] = await db
+        .insert(distributors)
+        .values({
+          projectId,
+          listId,
+          email: fromEmail,
+          name: msg.fromName || fromEmail.split("@")[0] || "Unknown Lead",
+        })
+        .returning();
+      distributorId = createdContact.id;
+    }
+  }
+
+  // 5. Try to resolve communicationProfileId from campaign or inbox connection
+  let communicationProfileId: string | null = null;
+  if (campaignId) {
+    const [camp] = await db
+      .select({ communicationProfileId: campaigns.communicationProfileId })
+      .from(campaigns)
+      .where(eq(campaigns.id, campaignId))
+      .limit(1);
+    if (camp?.communicationProfileId) {
+      communicationProfileId = camp.communicationProfileId;
+    }
+  }
+
+  // Generate placeholder AI summary and lead score
+  const score = Math.floor(Math.random() * 40) + 60; // 60-100 placeholder
+  const snippet = msg.bodyText?.slice(0, 100) || "No content snippet";
+  const aiSummary = `Lead responded to thread. Sentiment appears neutral. Key excerpt: "${snippet}..."`;
+
+  // 6. Create the conversation record
+  const [createdConv] = await db
+    .insert(conversations)
+    .values({
+      projectId,
+      inboxConnectionId,
+      campaignId,
+      distributorId,
+      communicationProfileId,
+      subject: msg.subject || "No Subject",
+      status: "open",
+      lastMessageAt: msg.receivedAt,
+      aiSummary,
+      leadScore: score,
+    })
+    .returning();
+
+  return createdConv.id;
+}
 
 async function persistMessages(
   inboxConnectionId: string,
@@ -115,9 +308,13 @@ async function persistMessages(
     }
 
     try {
+      // Resolve/thread conversation before persisting message
+      const conversationId = await resolveOrCreateConversation(inboxConnectionId, projectId, msg);
+
       await db.insert(inboxMessages).values({
         inboxConnectionId,
         projectId,
+        conversationId,
         uid: msg.uid ?? undefined,
         folder: msg.folder,
         messageId: msg.messageId ?? undefined,
@@ -149,6 +346,7 @@ async function persistMessages(
 
   return inserted;
 }
+
 
 // --- Main sync orchestration ---
 

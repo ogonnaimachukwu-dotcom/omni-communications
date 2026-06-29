@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
-import { ArrowLeft, Settings2, Users, Send, BarChart3, Mail } from "lucide-react";
+import { ArrowLeft, Settings2, Users, Send, BarChart3, Mail, Inbox } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { idSchema } from "@/core/projects/project.schema";
 import { requireProject, getAccessibleProjectStats } from "@/core/projects/project.service";
@@ -76,6 +76,13 @@ export default async function ProjectDetailPage({
           >
             <Mail className="size-4" />
             Communication
+          </Link>
+          <Link
+            href={`/projects/${project.id}/inbox`}
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            <Inbox className="size-4 text-indigo-400" />
+            Reply Center
           </Link>
           <Link
             href={`/projects/${project.id}/analytics`}

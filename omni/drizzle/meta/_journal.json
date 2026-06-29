@@ -57,6 +57,13 @@
       "when": 1782695645771,
       "tag": "0007_familiar_randall",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1782702708000,
+      "tag": "0008_organic_wrecking_crew",
+      "breakpoints": true
     }
   ]
 }
